@@ -97,6 +97,14 @@
   .catg{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#5a6480}
   .empty{font-size:12px;color:var(--muted);padding:10px;text-align:center}
 
+  /* mapa grande */
+  .map-row{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;padding:5px 8px;border-radius:5px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);cursor:pointer;letter-spacing:.5px}
+  .map-row:hover{background:rgba(246,196,83,.12)}
+  .map-row.lock{opacity:.5}
+  .map-row .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px;flex:none}
+  .map-row .side{display:flex;gap:6px;align-items:center;color:var(--muted);white-space:nowrap}
+  #mapchip{position:absolute;right:14px;bottom:154px;pointer-events:auto;cursor:pointer;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--gold2);letter-spacing:1px;box-shadow:0 4px 18px rgba(0,0,0,.45)}
+
   /* touch */
   #touch{position:absolute;inset:0;display:none;pointer-events:none;z-index:20}
   #touch.visible{display:block}
@@ -151,6 +159,7 @@
     <div id="sesschip"></div>
     <div id="eatchip" title="Comer melhor comida [P]">🍖 Comer [P]</div>
     <div id="hubchip" title="Trocar para o modo idle (mesmo herói)">🏠 Hub Idle</div>
+    <div id="mapchip" title="Mapa do mundo [M]">🗺️ Mapa [M]</div>
   </div>
 
   <div id="toasts"></div>
@@ -196,6 +205,19 @@
       <div class="tabs" id="tabs"></div>
       <div id="tabpages"></div>
       <button class="btn ghost" id="closejournal">Fechar [B]</button>
+    </div>
+  </div>
+
+  <!-- BIG MAP -->
+  <div class="screen hidden" id="bigmap">
+    <div class="panel" style="max-width:940px">
+      <h2>🗺️ Mapa do Mundo</h2>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;justify-content:center">
+        <canvas id="mapcv" width="900" height="900" style="width:min(60vh,680px);height:min(60vh,680px);image-rendering:pixelated;border:2px solid var(--border);border-radius:8px;background:#0c0f1a;flex:none"></canvas>
+        <div id="maplegend" style="flex:1;min-width:250px;max-height:56vh;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
+      </div>
+      <div id="maphint" class="statline" style="text-align:left;min-height:2.4em">⚪ você · 🟡 portal liberado · 🔴 selado · azul = ar de agilidade — clique num local para detalhes</div>
+      <button class="btn ghost" id="closebigmap">Fechar [M]</button>
     </div>
   </div>
 </div>

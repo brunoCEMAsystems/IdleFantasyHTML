@@ -146,7 +146,11 @@ const EXPGUI = {
           if (k === 'p' || k === 'P') this.eatFood(false);
         }
         if (k === 'q' || k === 'Q') this.cycleStyle();
-        if (k === 'b' || k === 'B' || k === 'c' || k === 'C' || k === 'Escape') this.toggleJournal();
+        if (k === 'm' || k === 'M') this.toggleBigMap();
+        if (k === 'b' || k === 'B' || k === 'c' || k === 'C' || k === 'Escape') {
+          if (!document.getElementById('bigmap').classList.contains('hidden')) this.toggleBigMap();
+          else this.toggleJournal();
+        }
       } else if (this.state === 'menu') { if (k === 'Enter' || k === ' ') this.startGame(); }
       else if (this.state === 'dead') { if (k === 'Enter' || k === ' ' || k === 'r' || k === 'R') this.respawn(); }
     });
@@ -183,6 +187,8 @@ const EXPGUI = {
     press('journalbtn', () => this.toggleJournal());
     document.getElementById('eatchip').addEventListener('click', () => this.eatFood(false));
     document.getElementById('hubchip').addEventListener('click', () => this.gotoHub());
+    document.getElementById('mapchip').addEventListener('click', () => this.toggleBigMap());
+    document.getElementById('closebigmap').addEventListener('click', () => this.toggleBigMap());
     document.getElementById('playbtn').addEventListener('click', () => this.startGame());
     document.getElementById('hubbtn').addEventListener('click', () => this.gotoHub());
     document.getElementById('respawnbtn').addEventListener('click', () => this.respawn());
@@ -425,6 +431,7 @@ const EXPGUI = {
 
   toggleJournal() {
     if (this.state === 'menu' || this.state === 'dead') return;
+    document.getElementById('bigmap').classList.add('hidden');
     this.paused = !this.paused;
     document.getElementById('journal').classList.toggle('hidden', !this.paused);
     if (this.paused) {
@@ -441,6 +448,120 @@ const EXPGUI = {
     if (!this.paused) this.toggleJournal();
     this.selectTab(id);
   },
+
+  /* ============================ MAPA GRANDE [M] ============================ */
+
+  toggleBigMap() {
+    if (this.state !== 'playing') return;
+    const mapEl = document.getElementById('bigmap');
+    const opening = mapEl.classList.contains('hidden');
+    if (opening) {
+      document.getElementById('journal').classList.add('hidden');
+      mapEl.classList.remove('hidden');
+      this.paused = true;
+      this.renderBigMap();
+    } else {
+      mapEl.classList.add('hidden');
+      this.paused = false;
+    }
+  },
+
+  /** Dados da legenda (puro, testável): portais ordenados por nível. */
+  bigMapLegend() {
+    const p = World.mode === 'dungeon'
+      ? (World.gates.find(g => g.key === World.dungeonKey) || World.player)
+      : World.player;
+    return World.gates.map((g, i) => {
+      const d = GameData.dungeons[g.key];
+      const unlocked = State.dungeonUnlocked(g.key);
+      return {
+        idx: i + 1, key: g.key, name: d?.display_name || g.key,
+        level: d?.recommended_level || 1, unlocked,
+        distTiles: Math.round(Math.hypot(g.x - p.x, g.y - p.y) / TILE),
+        desc: d?.description || '',
+      };
+    });
+  },
+
+  renderBigMap() {
+    const cv = document.getElementById('mapcv');
+    const ctx = cv.getContext('2d');
+    const R = 150, S = 3, C = 450;
+    const px = t => C + t * S;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, 900, 900);
+    ctx.imageSmoothingEnabled = false;
+    // terreno + muralha — sempre do overworld (mesmo se estiver numa dungeon)
+    const savedMode = World.mode;
+    World.mode = 'overworld';
+    for (let ty = -R; ty <= R; ty++) for (let tx = -R; tx <= R; tx++) {
+      let c;
+      if (World.wallAt(tx, ty)) c = '#8d939e';
+      else {
+        const t = World.terrainAt(tx, ty);
+        c = t === TERRAIN.WATER ? '#2f6fb0' : t === TERRAIN.SAND ? '#d8c084' : (t === TERRAIN.GRASS2 ? '#3f7a37' : '#4c8a40');
+      }
+      ctx.fillStyle = c;
+      ctx.fillRect(px(tx), px(ty), S, S);
+    }
+    World.mode = savedMode;
+    // edifícios da cidade
+    ctx.fillStyle = '#c9a05a';
+    for (const b of World.BUILDINGS) ctx.fillRect(px(b.x), px(b.y), b.w * S, b.h * S);
+    // canteiros
+    ctx.fillStyle = '#7a5a2f';
+    for (const sp of World.FARM_SPOTS) ctx.fillRect(px(sp.x), px(sp.y), S, S);
+    // circuito de agilidade
+    ctx.fillStyle = '#5aa9ff';
+    for (const ob of (World.obstacles || [])) ctx.fillRect(px(ob.tx) - 1, px(ob.ty) - 1, S + 2, S + 2);
+    // portais numerados
+    World.gates.forEach((g, i) => {
+      const unlocked = State.dungeonUnlocked(g.key);
+      const gx = px(g.tx) + S / 2, gy = px(g.ty) + S / 2;
+      ctx.fillStyle = unlocked ? '#f6c453' : '#e05252';
+      ctx.beginPath(); ctx.arc(gx, gy, 4, 0, 7); ctx.fill();
+      ctx.fillStyle = '#0c0f1a'; ctx.font = 'bold 6px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(String(i + 1), gx, gy + 2);
+    });
+    // jogador (dentro de dungeon: marcador no portal correspondente)
+    const p = World.mode === 'dungeon'
+      ? (World.gates.find(g => g.key === World.dungeonKey) || { x: 0, y: 0 })
+      : World.player;
+    const ptx = p.x / TILE, pty = p.y / TILE;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px(ptx), px(pty), 7, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(px(ptx), px(pty), 3.5, 0, 7); ctx.fill();
+    // rótulos
+    ctx.fillStyle = '#ffd97a'; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('🏰 CIDADE', C, px(-18));
+    ctx.fillText('N', C, 14);
+    // legenda lateral
+    const legend = document.getElementById('maplegend');
+    legend.innerHTML = '';
+    const rows = this.bigMapLegend();
+    const mkRow = (html, cls, onclick) => {
+      const d = document.createElement('div');
+      d.className = 'map-row' + (cls ? ' ' + cls : '');
+      d.innerHTML = html;
+      d.onclick = onclick;
+      legend.appendChild(d);
+    };
+    mkRow('<span>🏰 <b>Cidade murada</b> <span style="color:var(--muted)">· loja, igreja, oficina, comércio, Slayer, horta</span></span><span class="side">centro</span>', '', () => this._mapHint('🏰 A cidade: 🛒 Loja · ⛪ Igreja · 🏗️ Construção · 🐎 Comércio · 🗡️ Slayer · 🌾 horta · 🥷 alvos de Roubo · 🌀 portal do Hub'));
+    mkRow('<span>🤸 <b>Circuito de Agilidade</b></span><span class="side">anel azul</span>', '', () => this._mapHint('🤸 8 obstáculos ao redor da muralha — '+ Agility.currentCourse().def.display_name +' (+' + Agility.currentCourse().def.xp_per_success + ' XP por sucesso)'));
+    rows.forEach(r => {
+      mkRow(
+        '<span><span class="dot" style="background:' + (r.unlocked ? '#f6c453' : '#e05252') + '"></span>' + r.idx + '. ' + r.name + '</span>' +
+        '<span class="side"><span>Nv ' + r.level + '</span><span>' + (r.distTiles < 1000 ? r.distTiles + ' tiles' : (r.distTiles / 1000).toFixed(1) + 'k tiles') + '</span></span>',
+        r.unlocked ? '' : 'lock',
+        () => this._mapHint((r.unlocked ? '🏰 ' : '🔒 ') + r.name + ' (Nv ' + r.level + ') — ' + r.desc)
+      );
+    });
+    if (World.mode === 'dungeon')
+      this._mapHint('⚠️ Você está DENTRO de: ' + (GameData.dungeons[World.dungeonKey]?.display_name || '') + ' — o marcador branco mostra o portal de entrada.');
+  },
+
+  _mapHint(txt) { document.getElementById('maphint').innerHTML = txt; },
 
   buildTabs() {
     const el = document.getElementById('tabs');

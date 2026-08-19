@@ -40,8 +40,9 @@ const canvasStub = () => ({
   getContext: () => ctxStub,
   toDataURL: () => '',
 });
+const mapCtxStub = new Proxy({}, { get: (t, k) => (k === 'measureText' ? () => ({ width: 10 }) : () => {}), set: () => true });
 global.document = {
-  getElementById: () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {} }, appendChild() {}, remove() {}, innerHTML: '', textContent: '', addEventListener() {}, dataset: {} }),
+  getElementById: () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => true }, appendChild() {}, remove() {}, innerHTML: '', textContent: '', addEventListener() {}, dataset: {}, getContext: () => mapCtxStub, width: 0, height: 0, onclick: null }),
   querySelector: () => null,
   querySelectorAll: () => [],
   createElement: tag => (tag === 'canvas' ? canvasStub() : {
@@ -198,6 +199,16 @@ const load = f => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..',
   State.state.coins = 0;
   Trade.dispatch('local_market');
   check('no coins, no caravan', Trade.load().length === 0);
+
+  console.log('— big map —');
+  const legend = EXPGUI.bigMapLegend();
+  check('legend has all dungeons', legend.length === Object.keys(GameData.dungeons).length);
+  check('legend fields present', legend.every(r => r.name && typeof r.level === 'number' && typeof r.distTiles === 'number' && typeof r.unlocked === 'boolean'));
+  check('legend sorted by level', legend.every((r, i) => i === 0 || legend[i - 1].level <= r.level));
+  check('farm is unlocked & first', legend[0].unlocked === true);
+  EXPGUI.state = 'playing';
+  EXPGUI.renderBigMap();   // não deve lançar com stubs
+  check('renderBigMap runs', true);
 
   console.log('— blessings / xp multipliers —');
   State.state.church = { blessingKey: 'blessed_focus', blessingExpiresAt: Date.now() + 3600000 };
