@@ -53,14 +53,25 @@ const UI = {
     this.renderTopbar();
     const screen = this.screenEl();
     screen.innerHTML = '';
-    switch (this.tab) {
-      case 'home': screen.appendChild(this.renderHome()); break;
-      case 'skills': screen.appendChild(this.skillView ? this.renderSkillDetail(this.skillView) : this.renderSkills()); break;
-      case 'dungeons': screen.appendChild(this.renderDungeons()); break;
-      case 'character': screen.appendChild(this.renderCharacter()); break;
-      case 'shop': screen.appendChild(this.renderShop()); break;
-      case 'quests': screen.appendChild(this.renderQuests()); break;
-      case 'town': screen.appendChild(this.renderTown ? this.renderTown() : Util.el('div', 'empty-note', 'Town not loaded.')); break;
+    try {
+      switch (this.tab) {
+        case 'home': screen.appendChild(this.renderHome()); break;
+        case 'skills': screen.appendChild(this.skillView ? this.renderSkillDetail(this.skillView) : this.renderSkills()); break;
+        case 'dungeons': screen.appendChild(this.renderDungeons()); break;
+        case 'character': screen.appendChild(this.renderCharacter()); break;
+        case 'shop': screen.appendChild(this.renderShop()); break;
+        case 'quests': screen.appendChild(this.renderQuests()); break;
+        case 'town': screen.appendChild(this.renderTown ? this.renderTown() : Util.el('div', 'empty-note', 'Town not loaded.')); break;
+      }
+    } catch (e) {
+      // Error boundary: um save/state inesperado nunca mais deixa a tela branca —
+      // o erro aparece na própria tela (e o jogo continua navegável nos outros tabs).
+      console.error('[Idle Fantasy] render failed:', e);
+      screen.innerHTML = `<div class="card"><h2>⚠️ Something broke while rendering this tab</h2>
+        <p class="card-sub">Your save is safe — this is a display bug. Details:</p>
+        <p class="card-sub" style="font-family:monospace;color:#e05252">${Util.esc(String(e.message))}<br>
+        ${Util.esc(String((e.stack || '').split('\n')[1] || ''))}</p>
+        <p class="card-sub">Try another tab, or reload. If it persists, press F12 → Console and report the red error.</p></div>`;
     }
   },
 
