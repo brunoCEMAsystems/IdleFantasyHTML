@@ -51,7 +51,30 @@ const Engine = {
 
   /** Human label for the Repeat button. */
   lastStartLabel() {
+    return this.actionLabel(this.lastStart);
+  },
+
+  /** Restart whatever the player ran last (materials/levels re-validated). */
+  repeatLast() {
     const ls = this.lastStart;
+    if (!ls) return { error: 'Nothing to repeat yet.' };
+    if (ls.kind === 'dungeon') return this.startDungeonSession(ls.activityKey);
+    if (ls.kind === 'tower') return Systems.startTowerSession();
+    if (ls.kind === 'carnival') return Systems.startCarnivalSession(ls.activityKey);
+    if (ls.kind === 'boss') return Systems.Bosses.start(ls.activityKey);
+    if (ls.kind === 'expedition') return this.startSkillSession('expedition', ls.activityKey);
+    return this.startSkillSession(ls.skill, ls.activityKey);
+  },
+
+  /* ============================ QUEUE MASTER ============================ *
+   * Port of the app's session queue (PlayerRepository.maxQueueSize +
+   * QueuedSessionStarter.startNextQueued): 3 base slots, +1/+2/+3 from the
+   * Queue Master town building. The next queued session starts automatically
+   * when the current one is collected (Engine.collect) or on tab focus/boot.
+   */
+
+  /** Human label for any action descriptor {kind, skill, activityKey, qty}. */
+  actionLabel(ls) {
     if (!ls) return null;
     if (ls.kind === 'dungeon') return GameData.dungeons[ls.activityKey]?.display_name || 'last dungeon';
     if (ls.kind === 'tower') return 'Tower Floor ' + (State.state.tower.current + 1);
@@ -74,17 +97,60 @@ const Engine = {
     return `${def?.name || ls.skill}: ${actLabel || ls.activityKey}`;
   },
 
-  /** Restart whatever the player ran last (materials/levels re-validated). */
-  repeatLast() {
-    const ls = this.lastStart;
-    if (!ls) return { error: 'Nothing to repeat yet.' };
-    if (ls.kind === 'dungeon') return this.startDungeonSession(ls.activityKey);
-    if (ls.kind === 'tower') return Systems.startTowerSession();
-    if (ls.kind === 'carnival') return Systems.startCarnivalSession(ls.activityKey);
-    if (ls.kind === 'boss') return Systems.Bosses.start(ls.activityKey);
-    if (ls.kind === 'expedition') return this.startSkillSession('expedition', ls.activityKey);
-    return this.startSkillSession(ls.skill, ls.activityKey);
+  /** Append an action to the session queue. desc: {kind?, skill?, activityKey, qty?}. */
+  enqueueAction(desc) {
+    const q = State.state.sessionQueue;
+    const max = State.maxQueueSize();
+    if (q.length >= max)
+      return { error: `Queue is full (${q.length}/${max}) — upgrade the Queue Master in Town.` };
+    const label = this.actionLabel(desc) || desc.activityKey || 'session';
+    q.push({ kind: desc.kind || null, skill: desc.skill || null, activityKey: desc.activityKey, qty: desc.qty || 0, label });
+    State.pushLog(`📋 Queued: ${label} (${q.length}/${max})`);
+    State.save();
+    return { ok: true, label };
   },
+
+  removeQueued(index) {
+    const q = State.state.sessionQueue;
+    if (index >= 0 && index < q.length) {
+      const [item] = q.splice(index, 1);
+      State.pushLog(`🗑️ Removed from queue: ${item.label}`);
+      State.save();
+    }
+  },
+
+  /**
+   * Pop and start the next queued session. Items that can no longer start
+   * (missing materials, level, coins…) are dropped with a log instead of
+   * stalling everything behind them.
+   */
+  startNextQueued() {
+    if (this.hasSession()) return false;
+    const q = State.state.sessionQueue;
+    while (q.length) {
+      const item = q.shift();
+      const r = this._startQueuedAction(item);
+      if (r && r.ok) {
+        State.pushLog(`▶️ Next up from queue: ${item.label}`);
+        State.save();
+        return true;
+      }
+      State.pushLog(`⚠️ Skipped "${item.label}" — ${r?.error || 'could not start'}.`);
+    }
+    State.save();
+    return false;
+  },
+
+  _startQueuedAction(item) {
+    switch (item.kind) {
+      case 'dungeon': return this.startDungeonSession(item.activityKey);
+      case 'tower': return Systems.startTowerSession();
+      case 'carnival': return Systems.startCarnivalSession(item.activityKey);
+      case 'boss': return Systems.Bosses.start(item.activityKey);
+      default: return this.startSkillSession(item.skill || item.kind, item.activityKey, item.qty || undefined);
+    }
+  },
+
 
   _makeSession(kind, skill, activityKey, label, result, extra = {}) {
     const agilityLevel = State.level('agility');
@@ -169,7 +235,15 @@ const Engine = {
    */
   startSkillSession(skill, activityKey, qtyArg, opts = {}) {
     const worker = opts.worker || null;
-    if (!worker && this.hasSession()) return { error: 'A session is already running.' };
+    if (!worker && this.hasSession()) {
+      // UI probe: a Start button pressed while a session runs captures its action
+      // for the Queue Master instead of failing with "already running".
+      if (this._queueCapture) {
+        this._queueCapture = false;
+        return { __queueDesc: { kind: skill === 'expedition' ? 'expedition' : null, skill, activityKey, qty: qtyArg || 0 } };
+      }
+      return { error: 'A session is already running.' };
+    }
     const s = State.state;
     const level = State.level(skill);
     const capeBonus = State.capeBonus(skill);
@@ -400,7 +474,13 @@ const Engine = {
 
   startDungeonSession(dungeonKey, opts = {}) {
     const worker = opts.worker || null;
-    if (!worker && this.hasSession()) return { error: 'A session is already running.' };
+    if (!worker && this.hasSession()) {
+      if (this._queueCapture) {
+        this._queueCapture = false;
+        return { __queueDesc: { kind: 'dungeon', skill: null, activityKey: dungeonKey, qty: 0 } };
+      }
+      return { error: 'A session is already running.' };
+    }
     const dungeon = GameData.dungeons[dungeonKey];
     if (!dungeon) return { error: 'Unknown dungeon.' };
     if (!State.dungeonUnlocked(dungeonKey)) return { error: 'This dungeon is locked — something in the clouds must open the way…' };
@@ -593,6 +673,8 @@ const Engine = {
 
     State.state.stats.sessionsCollected++;
     State.state.session = null;
+    // Queue Master: the next queued session starts as soon as this one is collected
+    this.startNextQueued();
     State.save();
     return summary;
   },

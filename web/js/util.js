@@ -46,7 +46,7 @@ const Util = {
   },
 
   prettify(key) {
-    return key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return String(key ?? '').split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   },
 
   esc(s) {

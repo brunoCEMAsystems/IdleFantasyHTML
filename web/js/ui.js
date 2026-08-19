@@ -53,20 +53,34 @@ const UI = {
     this.renderTopbar();
     const screen = this.screenEl();
     screen.innerHTML = '';
-    switch (this.tab) {
-      case 'home': screen.appendChild(this.renderHome()); break;
-      case 'skills': screen.appendChild(this.skillView ? this.renderSkillDetail(this.skillView) : this.renderSkills()); break;
-      case 'dungeons': screen.appendChild(this.renderDungeons()); break;
-      case 'character': screen.appendChild(this.renderCharacter()); break;
-      case 'shop': screen.appendChild(this.renderShop()); break;
-      case 'quests': screen.appendChild(this.renderQuests()); break;
-      case 'town': screen.appendChild(this.renderTown ? this.renderTown() : Util.el('div', 'empty-note', 'Town not loaded.')); break;
+    try {
+      switch (this.tab) {
+        case 'home': screen.appendChild(this.renderHome()); break;
+        case 'skills': screen.appendChild(this.skillView ? this.renderSkillDetail(this.skillView) : this.renderSkills()); break;
+        case 'dungeons': screen.appendChild(this.renderDungeons()); break;
+        case 'character': screen.appendChild(this.renderCharacter()); break;
+        case 'shop': screen.appendChild(this.renderShop()); break;
+        case 'quests': screen.appendChild(this.renderQuests()); break;
+        case 'town': screen.appendChild(this.renderTown ? this.renderTown() : Util.el('div', 'empty-note', 'Town not loaded.')); break;
+      }
+    } catch (e) {
+      // Error boundary: um save/state inesperado nunca mais deixa a tela branca —
+      // o erro aparece na própria tela (e o jogo continua navegável nos outros tabs).
+      console.error('[Idle Fantasy] render failed:', e);
+      screen.innerHTML = `<div class="card"><h2>⚠️ Something broke while rendering this tab</h2>
+        <p class="card-sub">Your save is safe — this is a display bug. Details:</p>
+        <p class="card-sub" style="font-family:monospace;color:#e05252">${Util.esc(String(e.message))}<br>
+        ${Util.esc(String((e.stack || '').split('\n')[1] || ''))}</p>
+        <p class="card-sub">Try another tab, or reload. If it persists, press F12 → Console and report the red error.</p></div>`;
     }
   },
 
   /** Cheap per-tick refresh of live elements (no full re-render). */
   updateLive() {
     this.renderTopbar();
+    // Re-render once when the busy state flips so Start ↔ ➕ buttons stay honest
+    const busy = !!Engine.session();
+    if (this._renderedBusy !== busy) { this._renderedBusy = busy; this.render(); return; }
     if (this.updateTownLive) this.updateTownLive();
     const bar = document.getElementById('session-progress-fill');
     const label = document.getElementById('session-progress-label');
@@ -240,6 +254,9 @@ const UI = {
     // Status strip: active blessing, hired workers, seasonal event
     wrap.appendChild(this._renderStatusStrip());
 
+    // Queue Master card
+    wrap.appendChild(this._queueCard());
+
     // Recent activity log
     const logCard = Util.el('div', 'card');
     logCard.appendChild(Util.el('h2', null, '📖 Adventure log'));
@@ -257,6 +274,43 @@ const UI = {
     logCard.appendChild(logList);
     wrap.appendChild(logCard);
     return wrap;
+  },
+
+  /* ------------------------------ Queue Master ------------------------------ */
+
+  _queueCard() {
+    const card = Util.el('div', 'card');
+    const q = Array.isArray(State.state.sessionQueue) ? State.state.sessionQueue : [];
+    const max = State.maxQueueSize();
+    card.appendChild(Util.el('h2', null, `📋 Session Queue (${q.length}/${max})`));
+    if (q.length === 0) {
+      card.appendChild(Util.el('p', 'card-sub',
+        Engine.hasSession()
+          ? 'A session is running — press ➕ on any skill, dungeon, boss or game to queue up the next one. It starts automatically the moment this session is collected.'
+          : 'Queue up several sessions at once: press ➕ on any activity while a session runs. The next one starts automatically when the current ends.'));
+    } else {
+      const list = Util.el('div', 'row-list');
+      q.forEach((item, i) => {
+        const row = Util.el('div', 'row');
+        row.innerHTML = `
+          <div class="row-icon">${i + 1}</div>
+          <div class="row-main"><div class="row-name">${Util.esc(item.label || item.activityKey || 'session')}</div>
+          <div class="row-sub">${i === 0 && !Engine.hasSession() ? 'starting…' : 'starts after the previous session is collected'}</div></div>`;
+        const actions = Util.el('div', 'row-actions');
+        const rm = Util.el('button', 'btn small', '✕');
+        rm.title = 'Remove from queue';
+        rm.onclick = () => { Engine.removeQueued(i); this.render(); };
+        actions.appendChild(rm);
+        row.appendChild(actions);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+    }
+    if (max < 6) {
+      card.appendChild(Util.el('p', 'card-sub',
+        '🔧 Upgrade the Queue Master building in Town (Builder\'s Workshop) for more slots: +1/+2/+3.'));
+    }
+    return card;
   },
 
   _sessionCard(sess) {
@@ -457,14 +511,16 @@ const UI = {
     const row = Util.el('div', 'row' + (locked ? ' locked' : ''));
     const actions = Util.el('div', 'row-actions');
     if (extra) actions.appendChild(extra);
-    const btn = Util.el('button', 'btn small', locked ? '🔒' : 'Start');
-    btn.disabled = locked || Engine.hasSession();
+    const busy = Engine.hasSession();
+    const btn = Util.el('button', 'btn small', locked ? '🔒' : busy ? '➕' : 'Start');
+    if (!locked && busy) btn.title = 'A session is running — add this to the Queue Master queue';
+    btn.disabled = locked;
     if (!locked) btn.onclick = onStart;
     actions.appendChild(btn);
     row.innerHTML = `
       <div class="row-icon">${icon}</div>
       <div class="row-main">
-        <div class="row-name">${Util.esc(name)}</div>
+        <div class="row-name">${name}</div>
         <div class="row-sub">${sub || ''}</div>
       </div>`;
     row.appendChild(actions);
@@ -648,10 +704,33 @@ const UI = {
   },
 
   _tryRepeat() {
-    this._tryStart(() => Engine.repeatLast());
+    const ls = Engine.lastStart;
+    const desc = ls ? (
+      ls.kind === 'tower' ? { kind: 'tower', activityKey: null } :
+      ls.kind === 'boss' ? { kind: 'boss', activityKey: ls.activityKey } :
+      ls.kind === 'carnival' ? { kind: 'carnival', activityKey: ls.activityKey } : null) : null;
+    this._tryStart(() => Engine.repeatLast(), desc);
   },
 
-  _tryStart(fn) {
+  _tryStart(fn, queueDesc) {
+    // Session running? Route the press into the Queue Master instead.
+    if (Engine.hasSession() && (State.state.sessionQueue || []).length < State.maxQueueSize()) {
+      let desc = queueDesc;
+      if (!desc) {
+        // Probe the starter with capture on: it returns the action descriptor
+        // instead of failing with "already running".
+        Engine._queueCapture = true;
+        const probe = fn();
+        Engine._queueCapture = false;
+        if (probe && probe.__queueDesc) desc = probe.__queueDesc;
+      }
+      if (desc) {
+        const r = Engine.enqueueAction(desc);
+        if (r.error) this.toast(r.error, 'error');
+        else { this.toast(`📋 Queued: ${r.label}`, 'success'); this.render(); }
+        return;
+      }
+    }
     const res = fn();
     if (res.error) { this.toast(res.error, 'error'); return; }
     this.toast(`${res.session.label} — session started!`, 'success');
@@ -849,7 +928,7 @@ const UI = {
         sub: `${Util.esc(boss.description || '')}<br>${boss.hp} HP · ${boss.duration_minutes} min · loot ${Util.fmt(boss.common_loot.coins_min)}–${Util.fmt(boss.common_loot.coins_max)} 🪙${rares ? ' · rares: ' + rares : ''}${pet}`,
         locked: !lvlOk,
         lockedReason: `Requires combat level ${boss.combat_level_required}`,
-        onStart: () => this._tryStart(() => Systems.Bosses.start(key)),
+        onStart: () => this._tryStart(() => Systems.Bosses.start(key), { kind: 'boss', activityKey: key }),
       }));
     }
     card.appendChild(list);
