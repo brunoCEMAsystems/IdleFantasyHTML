@@ -22,6 +22,7 @@ const State = {
       styleWeapons: {},      // style -> weapon key memory
       activePotion: null,    // potion selected for the next combat session
       session: null,
+      sessionQueue: [],      // Queue Master: upcoming sessions (3 base slots + building)
       lastStart: null,       // {kind, skill, activityKey} for the Repeat button
       quests: {},            // id -> {claimed:bool}
       stats: {
@@ -296,6 +297,11 @@ const State = {
 
   /** Effective max HP including tower milestone bonuses (+5 hp levels each). */
   effectiveHpLevel() { return this.level('hitpoints') + (this.state.tower?.hpBonus || 0); },
+
+  /* ------------------------------ queue master ------------------------------ */
+
+  /** Queue capacity: 3 base slots + Queue Master building tiers (port of maxQueueSize). */
+  maxQueueSize() { return 3 + this.townBonus('queue_slots'); },
 
   /* ------------------------- town building bonuses ------------------------- */
 

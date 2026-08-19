@@ -27,6 +27,8 @@
   if (typeof Systems.Seasonal !== 'undefined') Systems.Seasonal.ensureBountySlots();
 
   Engine.restoreLastStart();
+  // Queue Master: resume a pending queue right away (port of the alarm receiver's auto-advance)
+  if (!Engine.hasSession() && (State.state.sessionQueue || []).length > 0) Engine.startNextQueued();
   UI.bindTabs();
   UI.render();
 
@@ -46,6 +48,15 @@
 
   // Tick: refresh live session readouts + worker completion pings
   setInterval(() => {
+    // Queue Master auto-advance: with items queued, finished sessions are
+    // collected automatically and the next queued one starts right away.
+    const qs = Engine.session();
+    if (qs && qs.endsAt <= Date.now() && (State.state.sessionQueue || []).length > 0) {
+      Engine.collect();
+      UI.render();
+    } else if (!qs && (State.state.sessionQueue || []).length > 0 && Engine.startNextQueued()) {
+      UI.render();
+    }
     UI.updateLive();
     for (const slot of [1, 2]) {
       const worker = State.state.inn.workers[slot];

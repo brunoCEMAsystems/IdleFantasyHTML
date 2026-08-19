@@ -165,6 +165,40 @@ const load = f => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..',
   for (let i = 0; i < 30; i++) { npc.cd = 0; World.player.stun = 0; Thieving.attempt(npc); attempts++; if (State.state.coins !== coinsBefore) break; }
   check('pickpocket eventually pays', State.state.coins !== coinsBefore || State.xp('thieving') > 0);
 
+  console.log('— town wall & medieval layout —');
+  check('wall ring solid', World.wallAt(10, 10) === true);
+  check('south gate open', World.wallAt(0, World.townR + 1) === false && World.wallAt(1, World.townR + 1) === false);
+  check('wall blocks movement', World.solidTile(10, 10) === true);
+  check('gate walkable', World.solidTile(0, World.townR + 1) === false);
+  check('no resources inside walls', World.resourceAt(10, 9) === null);
+  check('trade post exists', !!World.BUILDINGS.find(b => b.key === 'trade'));
+
+  console.log('— agility obstacles —');
+  check('obstacles built', (World.obstacles || []).length >= 7);
+  const agiBefore = State.xp('agility');
+  const realRandom = Math.random;
+  Math.random = () => 0.0;   // sucesso garantido
+  World.player.stun = 0; World.obstacles[0].cd = 0;
+  Agility.attempt(World.obstacles[0]);
+  Math.random = realRandom;
+  check('agility xp on success', State.xp('agility') > agiBefore);
+
+  console.log('— mercantile caravans —');
+  Trade.save([]);
+  State.state.coins = 5000;
+  const coins0 = State.state.coins, merc0 = State.xp('mercantile');
+  Trade.dispatch('local_market');
+  const caravans = Trade.load();
+  check('caravan dispatched (paid cost)', caravans.length === 1 && State.state.coins === 3000);
+  caravans[0].returnsAt = Date.now() - 1;
+  Trade.save(caravans);
+  Trade.update();
+  check('caravan paid out', State.state.coins > 3000 && State.xp('mercantile') > merc0);  // retorno variável: pode até dar prejuízo
+  check('caravan list emptied', Trade.load().length === 0);
+  State.state.coins = 0;
+  Trade.dispatch('local_market');
+  check('no coins, no caravan', Trade.load().length === 0);
+
   console.log('— blessings / xp multipliers —');
   State.state.church = { blessingKey: 'blessed_focus', blessingExpiresAt: Date.now() + 3600000 };
   const prayBefore = State.xp('prayer');

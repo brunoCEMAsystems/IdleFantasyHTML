@@ -53,7 +53,10 @@ const World = {
     { key: 'shop', x: -8, y: -7, w: 4, h: 3, icon: '🛒', name: 'Loja Geral' },
     { key: 'church', x: 4, y: -7, w: 4, h: 3, icon: '⛪', name: 'Igreja' },
     { key: 'workshop', x: -8, y: 2, w: 3, h: 3, icon: '🏗️', name: 'Oficina (Hub)' },
+    { key: 'trade', x: 3, y: 2, w: 3, h: 3, icon: '🐎', name: 'Posto de Comércio' },
   ],
+  WELL: { x: 0, y: -2 },                                // poço central (sólido)
+  LAMPS: [{ x: -4, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 4 }, { x: -3, y: -5 }, { x: 3, y: -5 }],
   NPC_HOME: { x: 0, y: 3 },       // Slayer Master fica parado aqui
   PORTAL: { x: 6, y: 4 },         // portal para o modo Hub
   FARM_SPOTS: [{ x: -3, y: 6 }, { x: -1, y: 6 }, { x: 1, y: 6 }, { x: 3, y: 6 }, { x: 5, y: 6 }],
@@ -63,6 +66,21 @@ const World = {
     return null;
   },
   portalTile(tx, ty) { return tx === this.PORTAL.x && ty === this.PORTAL.y; },
+
+  /* ---- muralha medieval: anel de pedra ao redor da cidade ---- */
+
+  /** Tile da muralha? Anel entre townR+0.6 e townR+1.6, com portão sul aberto. */
+  wallAt(tx, ty) {
+    const r = Math.hypot(tx, ty);
+    if (r < this.townR + 0.6 || r > this.townR + 1.6) return false;
+    // Portão sul: abertura de 3 tiles + estrada
+    if (ty > 0 && Math.abs(tx) <= 1 && ty >= this.townR) return false;
+    return true;
+  },
+  gateTowerAt(tx, ty) {
+    return (Math.abs(Math.hypot(tx, ty) - (this.townR + 1.1)) < 0.9) &&
+      ty > 0 && Math.abs(tx) >= 1.6 && Math.abs(tx) <= 2.6;
+  },
 
   farmSpotAt(tx, ty) {
     for (let i = 0; i < this.FARM_SPOTS.length; i++) {
@@ -95,6 +113,8 @@ const World = {
 
   solidTile(tx, ty) {
     if (this.buildingAt(tx, ty)) return true;
+    if (this.WELL && tx === this.WELL.x && ty === this.WELL.y) return true;
+    if (this.mode === 'overworld' && this.wallAt(tx, ty)) return true;
     if (this.terrainAt(tx, ty) === TERRAIN.WATER) return true;
     if (this.mode === 'overworld') {
       const k = tx + ',' + ty;
@@ -113,7 +133,7 @@ const World = {
 
   resourceAt(tx, ty) {
     if (this.mode === 'dungeon') return null;
-    if (this.inTown(tx, ty)) return null;
+    if (Math.hypot(tx, ty) <= this.townR + 2.6) return null;   // cidade murada + fossos: sem nós
     if (this.gateTiles && this.gateTiles.has(tx + ',' + ty)) return null;
     const t = this.terrainAt(tx, ty);
     if (t === TERRAIN.WATER) return null;
@@ -184,6 +204,30 @@ const World = {
       }
       this.gates.push({ key: d.name, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, tx, ty, idx: i });
     });
+  },
+
+  /** Anel de obstáculos de agilidade ao redor da muralha (fora dela). */
+  buildObstacles() {
+    this.obstacles = [];
+    const N = 8, R = this.townR + 5.2;
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI * 2 + 0.39;
+      const tx = Math.round(Math.cos(ang) * R), ty = Math.round(Math.sin(ang) * R);
+      if (Math.abs(tx) <= 2 && ty > this.townR - 1) continue;  // não bloqueia o portão sul
+      this.obstacles.push({
+        tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2,
+        kind: ['log', 'wall', 'beam', 'pipe'][i % 4], cd: 0,
+      });
+    }
+  },
+
+  obstacleNear(px, py, maxDist = 42) {
+    let best = null, bd = maxDist;
+    for (const ob of this.obstacles || []) {
+      const d = Math.hypot(ob.x - px, ob.y - py);
+      if (d < bd) { bd = d; best = ob; }
+    }
+    return best;
   },
 
   gateNear(px, py, maxDist = 46) {
@@ -756,6 +800,106 @@ const Thieving = {
 };
 
 /* =====================================================================
+   AGILITY — circuito de obstáculos ao redor da muralha
+   ===================================================================== */
+const Agility = {
+  _succ: 0,
+
+  /** Maior curso desbloqueado pelo nível (como o treino do Hub). */
+  currentCourse() {
+    const lvl = State.level('agility');
+    let best = null;
+    for (const [k, c] of Object.entries(GameData.agilityCourses))
+      if (lvl >= c.level_required && (!best || c.level_required > best.def.level_required)) best = { key: k, def: c };
+    return best || { key: 'beginner_course', def: GameData.agilityCourses.beginner_course };
+  },
+
+  attempt(ob) {
+    const p = World.player;
+    if (ob.cd > 0 || p.stun > 0) return;
+    ob.cd = 1.4;
+    const course = this.currentCourse();
+    const chance = Math.min(0.95, 0.80 + (State.level('agility') - course.def.level_required) * 0.02);
+    if (Math.random() >= chance) {
+      p.stun = 1.2;
+      EXPGUI.toast('💨 ' + course.def.display_name + ' — você tropeçou!');
+      SFX.error();
+      return;
+    }
+    XPGain.withPet('agility', course.def.xp_per_success);
+    const pet = GameData.petBySkill.agility;
+    if (pet && Math.random() < 1 / 1000) State.addPet(pet.id);
+    this._succ++;
+    if (this._succ % 10 === 0) Systems.recordGuildAgility?.(course.key);
+    // atravessa o obstáculo com um passinho
+    const dx = ob.x - p.x, dy = ob.y - p.y, m = Math.hypot(dx, dy) || 1;
+    const nx = p.x + dx / m * 52, ny = p.y + dy / m * 52;
+    if (!World.collidesRect(nx - 7, ny - 15, 14, 15)) { p.x = nx; p.y = ny; }
+    World.spawnFloat(ob.x, ob.y - 18, '+' + course.def.xp_per_success + ' Agi', '#8fd8ff');
+    World.spawnParticles(ob.x, ob.y, '#8fd8ff', 5, 70);
+    SFX.pickup();
+  },
+
+  update(dt) { for (const ob of World.obstacles || []) ob.cd = Math.max(0, ob.cd - dt); },
+};
+
+/* =====================================================================
+   MERCANTILE — caravanas em tempo real (Posto de Comércio)
+   Uma viagem = 90s e rende o equivalente a uma sessão completa do Hub.
+   ===================================================================== */
+const Trade = {
+  KEY: 'expeditions_caravans_v1',
+  TRIP_MS: 90000,
+  MAX_CARAVANS: 2,
+
+  load() { try { return JSON.parse(localStorage.getItem(this.KEY) || '[]'); } catch (e) { return []; } },
+  save(list) { try { localStorage.setItem(this.KEY, JSON.stringify(list)); } catch (e) { } },
+
+  dispatch(routeKey) {
+    const r = GameData.tradeRoutes[routeKey];
+    if (!r) return;
+    if (State.level('mercantile') < r.level_required) { EXPGUI.toast('Requer Mercantil ' + r.level_required); SFX.error(); return; }
+    const list = this.load();
+    if (list.length >= this.MAX_CARAVANS) { EXPGUI.toast('Máximo de ' + this.MAX_CARAVANS + ' caravanas simultâneas'); SFX.error(); return; }
+    if (State.state.coins < r.coin_cost) { EXPGUI.toast('Moedas insuficientes (' + Util.fmt(r.coin_cost) + ' 🪙)'); SFX.error(); return; }
+    State.state.coins -= r.coin_cost;
+    list.push({ key: routeKey, returnsAt: Date.now() + this.TRIP_MS, cost: r.coin_cost });
+    this.save(list);
+    State.save();
+    EXPGUI.toast('🐎 Caravana despachada: ' + r.display_name + ' (90s)');
+    SFX.portal();
+    EXPGUI.refreshOpenTab?.('trade');
+  },
+
+  /** Resolve caravanas que chegaram (chamado no update). */
+  update() {
+    const list = this.load();
+    if (!list.length) return;
+    const still = [];
+    let changed = false;
+    for (const c of list) {
+      if (Date.now() < c.returnsAt) { still.push(c); continue; }
+      const r = GameData.tradeRoutes[c.key];
+      if (r) {
+        const lvl = State.level('mercantile');
+        const xpR = Util.tierFor(r.xp_ranges, lvl), coinR = Util.tierFor(r.coin_ranges, lvl);
+        const xp = Util.randInt(xpR.min, xpR.max) * 60;
+        const coins = Math.floor(Util.randInt(coinR.min, coinR.max) * 60 * State.blessingCoinMultiplier());
+        XPGain.withPet('mercantile', xp);
+        State.addItem('coins', coins);
+        QuestFeed.gather('mercantile', { coins });
+        Systems.recordGuildTrade?.(c.key, coins);
+        EXPGUI.toast('🐎 ' + r.display_name + ' voltou: +' + Util.fmt(coins) + ' 🪙');
+        if (World.player) World.spawnFloat(World.player.x, World.player.y - 30, '+' + Util.fmt(coins) + ' 🪙', '#f6c453');
+        SFX.gold();
+      }
+      changed = true;
+    }
+    if (changed) { this.save(still); State.save(); }
+  },
+};
+
+/* =====================================================================
    DUNGEONS — entrar/sair + contagem de run
    ===================================================================== */
 const Dungeons = {
@@ -836,6 +980,8 @@ function worldUpdate(dt) {
   Combat.updateEnemies(dt);
   Combat.updateProjectiles(dt);
   Thieving.updateNPCs(dt);
+  Agility.update(dt);
+  Trade.update();
   updateParticles(dt);
   updateFloats(dt);
   // regenerar nós

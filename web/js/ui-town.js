@@ -348,7 +348,7 @@
         </div>`;
       const btn = Util.el('button', 'btn small', 'Play');
       btn.disabled = Engine.hasSession();
-      btn.onclick = () => this._tryStart(() => Systems.startCarnivalSession(game.key));
+      btn.onclick = () => this._tryStart(() => Systems.startCarnivalSession(game.key), { kind: 'carnival', activityKey: game.key });
       const act = Util.el('div', 'row-actions');
       act.appendChild(btn);
       row.appendChild(act);
@@ -540,7 +540,7 @@
     btn.style.maxWidth = '340px';
     btn.style.margin = '6px auto 0';
     btn.style.display = 'block';
-    btn.onclick = () => this._tryStart(() => Systems.startTowerSession());
+    btn.onclick = () => this._tryStart(() => Systems.startTowerSession(), { kind: 'tower', activityKey: null });
     card.appendChild(btn);
     wrap.appendChild(card);
 

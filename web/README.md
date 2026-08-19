@@ -53,11 +53,12 @@ pre-simulated sessions.
 
 | Expedition feature | Details |
 | --- | --- |
-| **World** | Procedural open world (value-noise terrain), town hub with shop, church, slayer master, farming plots and thieving NPCs; dungeon gates placed deterministically and gated by the same unlock rules as the Hub (expedition lore notes, magic bean). |
+| **World** | Procedural open world (value-noise terrain) and a **walled medieval town** (stone ring, south gate with towers and banners, cobblestone plaza, central well, glowing lamp posts) hosting the shop, church, construction workshop, trade post, slayer master, farming plots and thieving NPCs. Dungeon gates are placed deterministically and gated by the same unlock rules as the Hub (expedition lore notes, magic bean). |
+| **All 23 skills** | Mining/woodcutting/fishing nodes, thieving, real-time farming, **agility obstacle circuit around the town wall** (success chance like the app's courses), **construction crafting** at the workshop, and **mercantile caravans** at the trade post (90 s real-time trips paying a full session's worth of XP/coins). |
 | **Gathering** | Mining/woodcutting nodes with tool efficiency (pickaxe/axe tiers incl. the +25 %/tier over-level bonus), gem rolls per ore, 1/1000 pets, skill-cape yields, fishing with rod efficiency. |
 | **Combat** | Melee arc / arrows (best tier first, consumed per shot) / spell projectiles with rune costs and infinite-rune staves; enemy telegraphs; auto-eat at 50 % HP; safe zones can't kill you; death keeps XP and respawns in town. |
 | **Dungeons** | Instanced caves with the real enemy rosters, encounter pacing from `encounter_rate`, rare-drop rolls after a completed run (≥8 kills), style/no-food run tracking for quests. |
-| **Journal [B]** | 14 tabs: skills, equipment, forge, fletching, crafting, cooking (+firemaking), herblore, runecrafting (×2/×3 at 50/75), prayers (scatter bones/ashes, church blessings), spellbook, farming, Slayer master (+points shop), general store (buy/sell, 2× XP boost) and the codex. |
+| **Journal [B]** | 16 tabs: skills, equipment, forge, fletching, crafting, cooking (+firemaking), herblore, runecrafting (×2/×3 at 50/75), construction, trade post, prayers (scatter bones/ashes, church blessings), spellbook, farming, Slayer master (+points shop), general store (buy/sell, 2× XP boost) and the codex. |
 
 Controls: **WASD** move · **Space/J/click** attack/gather · **E** interact ·
 **Q** combat style · **P** eat · **B** journal. Touch controls (joystick + buttons)
@@ -75,6 +76,7 @@ appear automatically on mobile.
 | **Production** | Quantity-based sessions like the app (`buildCraftFrames`): materials consumed up front, session length scales with amount and tool efficiency. |
 | **Dungeons** | All 29 dungeons with their real enemy rosters, weights, drops and safe zones, plus the survival-rating estimator. |
 | **Gear** | 340+ equipment pieces with slots, level requirements, two-handed rules, tool efficiencies (pickaxes, axes, rods, hammers… incl. the +25 %/tier over-level bonus) and skill capes at 99. |
+| **Queue Master** | Session queue (port of the app's `QueuedSessionStarter`): 3 base slots +1/+2/+3 from the Queue Master town building. While a session runs, every Start button becomes ➕ and queues instead; the next session starts automatically on collect (and via the tick when the tab is open). Items that can no longer start are skipped with a log. |
 | **Shop** | The app's marketplace catalogue and its sell-price heuristics (bars by metal, gems by rarity, etc.). |
 | **Quests** | All **189** of the app's quests auto-track (gather / craft / kill / dungeon / boss-slaying / building-upgrade / thieving / prayer / slayer families) with claimable rewards. |
 | **Farming** | Real-time crop patches (3/4/5 by level), seeds from the shop, ash fertilizer (up to 2.5× yield), farming pet at 1/1000 per harvest, and the rare Magic Bean that unlocks the Cloud Kingdom dungeon. |

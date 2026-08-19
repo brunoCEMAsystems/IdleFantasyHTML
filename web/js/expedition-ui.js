@@ -22,6 +22,7 @@ const EXPGUI = {
     EXP.buildLists();
     if (!State.load()) { State.init(); State.save(); }
     World.buildGates();
+    World.buildObstacles();
     World.makeNPCs();
     this.buildHeroSprites();
     this.buildSprites();
@@ -62,6 +63,7 @@ const EXPGUI = {
     this.shopSpr = this.houseSpr('#c0392b', '#e8d8b0');
     this.churchSpr = this.houseSpr('#5a7fc9', '#d8d8e0');
     this.workshopSpr = this.houseSpr('#8a6a3a', '#c9a878');
+    this.tradeSpr = this.houseSpr('#3f7a4a', '#d8c9a0');
   },
 
   showMenuHero() {
@@ -243,7 +245,8 @@ const EXPGUI = {
       if (ptx >= b.x - 1 && ptx <= b.x + b.w && pty >= b.y - 1 && pty <= b.y + b.h) {
         if (b.key === 'shop') return { label: '🛒 ' + b.name, sub: 'comprar/vender', action: () => this.openJournalTab('shop') };
         if (b.key === 'church') return { label: '⛪ ' + b.name, sub: 'orações e bênçãos', action: () => this.openJournalTab('pray') };
-        if (b.key === 'workshop') return { label: '🏗️ ' + b.name, sub: 'Construção e caravanas ficam no Hub', action: () => this.gotoHub() };
+        if (b.key === 'workshop') return { label: '🏗️ ' + b.name, sub: 'oficina de construção — móveis e materiais', action: () => this.openJournalTab('build') };
+        if (b.key === 'trade') return { label: '🐎 ' + b.name, sub: 'despache caravanas (Mercantil)', action: () => this.openJournalTab('trade') };
       }
     }
     // Slayer Master
@@ -261,6 +264,16 @@ const EXPGUI = {
         const left = Systems.patchTimeLeftMs(patch);
         return { label: '🌱 ' + crop.display_name + ' crescendo', sub: 'pronto em ' + Util.fmtTime(left), action: () => this.openJournalTab('farm') };
       }
+    }
+    // obstáculos de agilidade (anel fora da muralha)
+    const ob = World.obstacleNear(p.x, p.y);
+    if (ob) {
+      const course = Agility.currentCourse();
+      return {
+        label: '🤸 Obstáculo: ' + course.def.display_name,
+        sub: 'Agilidade ' + course.def.level_required + '+ · +' + course.def.xp_per_success + ' XP por sucesso',
+        action: () => Agility.attempt(ob),
+      };
     }
     // NPCs (roubo)
     let bestNpc = null, bd = 44;
@@ -406,8 +419,8 @@ const EXPGUI = {
   TABS: [
     ['skills', 'Skills'], ['equip', 'Equipar'], ['forge', 'Forja'], ['fletch', 'Fletching'],
     ['craft', 'Crafting'], ['cook', 'Cozinha'], ['herb', 'Alquimia'], ['runes', 'Runas'],
-    ['pray', 'Orações'], ['magic', 'Magias'], ['farm', 'Plantação'], ['slayer', 'Slayer'],
-    ['shop', 'Loja'], ['codex', 'Codex'],
+    ['build', 'Construção'], ['trade', 'Comércio'], ['pray', 'Orações'], ['magic', 'Magias'],
+    ['farm', 'Plantação'], ['slayer', 'Slayer'], ['shop', 'Loja'], ['codex', 'Codex'],
   ],
 
   toggleJournal() {
@@ -420,6 +433,10 @@ const EXPGUI = {
     }
   },
   closeJournal() { if (this.paused) this.toggleJournal(); },
+  /** Re-renderiza uma aba se ela estiver aberta (ex.: caravana despachada). */
+  refreshOpenTab(id) {
+    if (this.paused && document.querySelector('.tab.active')?.dataset.id === id) this.renderTab(id);
+  },
   openJournalTab(id) {
     if (!this.paused) this.toggleJournal();
     this.selectTab(id);
@@ -452,6 +469,7 @@ const EXPGUI = {
       skills: t => this.rSkills(t), equip: t => this.rEquip(t), forge: t => this.rForge(t),
       fletch: t => this.rRecipes(t, 'fletching'), craft: t => this.rRecipes(t, 'crafting'),
       cook: t => this.rCook(t), herb: t => this.rRecipes(t, 'herblore'), runes: t => this.rRunes(t),
+      build: t => this.rBuild(t), trade: t => this.rTrade(t),
       pray: t => this.rPray(t), magic: t => this.rMagic(t), farm: t => this.rFarm(t),
       slayer: t => this.rSlayer(t), shop: t => this.rShop(t), codex: t => this.rCodex(t),
     }[id];
@@ -481,7 +499,7 @@ const EXPGUI = {
       d.title = def.desc;
       el.appendChild(d);
     }
-    const note = this.rowEl('<span class="nm">ℹ️ Construction, Mercantile e Agility (pistas)</span><span class="side"><span>melhores no Hub idle</span></span>');
+    const note = this.rowEl('<span class="nm">ℹ️ Todos os 23 skills treináveis aqui</span><span class="side"><span>Agility: obstáculos na muralha · Construction: 🏗️ · Mercantile: 🐎</span></span>');
     el.appendChild(note);
   },
 
@@ -556,7 +574,10 @@ const EXPGUI = {
         if (!lvlOk || !matsOk) { SFX.error(); return; }
         for (const [m, n] of Object.entries(r.materials || {})) State.removeItem(m, n);
         State.addItem(outKey, r.output_quantity || 1);
-        XPGain.withPet(skill, r.xp_per_item || 0);
+        // martelo acelera a família smith/fletch/craft/construction (como o Hub)
+        const eff = ['smithing', 'fletching', 'crafting', 'construction'].includes(skill)
+          ? State.toolEfficiency('hammer', 'smithing', r.level_required || 1) : 1;
+        XPGain.withPet(skill, Math.floor((r.xp_per_item || 0) * eff));
         QuestFeed.craft(skill, outKey, r.output_quantity || 1);
         Systems.recordGuildCrafting?.(skill, { [outKey]: r.output_quantity || 1 });
         SFX.buy(); State.save(); this.renderTab(document.querySelector('.tab.active').dataset.id);
@@ -629,6 +650,40 @@ const EXPGUI = {
         QuestFeed.craft('runecrafting', key, mult);
         SFX.buy(); State.save(); this.renderTab('runes');
       };
+      el.appendChild(d);
+    }
+  },
+
+  /* ---- Construção ---- */
+  rBuild(el) {
+    this.section(el, '🏗️ Construção — móveis e materiais (também no Hub, para melhorar a cidade)');
+    const entries = Object.entries(GameData.recipes.construction);
+    this.rRecipeList(el, 'construction', entries, '🪵 Receitas de construção');
+    el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">💡 Pranchas, pregos e pedra talhada melhoram os prédios da cidade na aba Town do Hub (Oficina do Construtor)</span>'));
+  },
+
+  /* ---- Comércio (Mercantile) ---- */
+  rTrade(el) {
+    this.section(el, '🐎 Posto de Comércio — caravanas em tempo real');
+    const list = Trade.load();
+    if (list.length) {
+      for (const c of list) {
+        const r = GameData.tradeRoutes[c.key];
+        const left = c.returnsAt - Date.now();
+        el.appendChild(this.rowEl('<span class="nm">🐎 ' + (r ? r.display_name : c.key) + ' em viagem</span>' +
+          '<span class="side"><span class="ok">volta em ' + Util.fmtTime(left) + '</span></span>'));
+      }
+    } else {
+      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Nenhuma caravana em viagem — despache abaixo (90s por viagem)</span>'));
+    }
+    for (const r of GameData.tradeRouteList) {
+      const lvlOk = State.level('mercantile') >= r.level_required;
+      const can = lvlOk && State.state.coins >= r.coin_cost && list.length < Trade.MAX_CARAVANS;
+      const d = this.rowEl('<span class="nm">🛒 ' + r.display_name + ' <span class="catg">Nv ' + r.level_required + '</span></span>' +
+        '<span class="side"><span class="' + (State.state.coins >= r.coin_cost ? 'ok' : 'lock') + '">' + Util.fmt(r.coin_cost) + ' 🪙</span>' +
+        '<button class="buybtn' + (can ? '' : ' disabled') + '">Despachar</button></span>' +
+        '<div class="dsc">' + (r.description || '') + '</div>');
+      d.querySelector('button').onclick = () => { Trade.dispatch(r.id || r.name || GameData.tradeRouteList.find(x => x === r)?.id); this.renderTab('trade'); };
       el.appendChild(d);
     }
   },
@@ -925,6 +980,7 @@ const EXPGUI = {
       }
       this.drawTown(ctx, ox, oy);
       this.drawGates(ctx, ox, oy);
+      this.drawObstacles(ctx, ox, oy);
       for (const npc of World.npcs) this.drawEnemy(ctx, npc, ox, oy, '#8fd8ff');
     } else {
       // saída da dungeon
@@ -981,13 +1037,52 @@ const EXPGUI = {
       ctx.fillRect(x, y, TILE, TILE);
       if (hash2(tx, ty) < 0.2) { ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(x + hash2(tx, ty + 9) * 20 + 4, y + hash2(tx + 4, ty) * 20 + 4, 6, 2); }
     } else {
+      // muralha medieval ao redor da cidade
+      if (World.wallAt(tx, ty)) {
+        const tower = World.gateTowerAt(tx, ty);
+        ctx.fillStyle = tower ? '#7a7f8c' : (v < 0.5 ? '#6a7078' : '#5f656d');
+        ctx.fillRect(x, y, TILE, TILE);
+        // tijolos
+        ctx.fillStyle = 'rgba(0,0,0,.22)';
+        for (let by = 4; by < TILE; by += 8) ctx.fillRect(x, y + by, TILE, 1);
+        for (let bx = ((tx + ty) % 2) * 8; bx < TILE; bx += 16) ctx.fillRect(x + bx + 4, y + ((bx / 16 | 0) % 2) * 8, 1, 8);
+        // ameias no topo (lado de dentro da cidade)
+        const inside = Math.hypot(tx, ty) < World.townR + 1.1;
+        if (inside) {
+          ctx.fillStyle = tower ? '#8f95a3' : '#7a8088';
+          ctx.fillRect(x, y, TILE, 6);
+          ctx.fillStyle = '#5f656d';
+          ctx.fillRect(x + 4, y, 6, 10); ctx.fillRect(x + 20, y, 6, 10);
+        }
+        if (tower) { // ameias de torre nos dois lados do portão
+          ctx.fillStyle = '#8f95a3';
+          ctx.fillRect(x + 2, y + 2, 6, 6); ctx.fillRect(x + TILE - 8, y + TILE - 8, 6, 6);
+        }
+        return;
+      }
+      // estrada de terra saindo do portão sul
+      if (Math.abs(tx) <= 1 && ty >= World.townR - 1 && ty <= World.townR + 3) {
+        ctx.fillStyle = v < 0.5 ? '#a58a5f' : '#9c8158';
+        ctx.fillRect(x, y, TILE, TILE);
+        ctx.fillStyle = 'rgba(0,0,0,.15)';
+        if (hash2(tx, ty) < 0.4) ctx.fillRect(x + 6 + hash2(tx, ty + 5) * 16, y + 8 + hash2(tx + 2, ty) * 14, 3, 2);
+        return;
+      }
       const inTown = World.inTown(tx, ty);
       let base = t === TERRAIN.SAND ? '#e5cd97' : t === TERRAIN.GRASS2 ? '#4f9545' : '#5aa04c';
-      if (inTown) base = '#6aa85a';
+      if (inTown) base = '#63a052';
       ctx.fillStyle = v < 0.12 ? shadeColor2(base, -8) : (v > 0.88 ? shadeColor2(base, 8) : base);
       ctx.fillRect(x, y, TILE, TILE);
-      if (inTown && Math.abs(tx) + Math.abs(ty) < 11 && (tx + ty) % 2 === 0) {
-        ctx.fillStyle = 'rgba(160,150,140,.35)'; ctx.fillRect(x + 3, y + 3, TILE - 6, TILE - 6);
+      // praça de pedra no centro
+      if (inTown && Math.abs(tx) + Math.abs(ty) < 9) {
+        ctx.fillStyle = (tx + ty) % 2 === 0 ? 'rgba(165,155,140,.5)' : 'rgba(150,140,128,.42)';
+        ctx.fillRect(x + 1, y + 1, TILE - 2, TILE - 2);
+        if (v > 0.85) { ctx.fillStyle = 'rgba(120,110,100,.5)'; ctx.fillRect(x + 12, y + 14, 6, 4); }
+      }
+      // canteiros de flores decorativos
+      if (inTown && Math.abs(tx) + Math.abs(ty) >= 9 && v > 0.72) {
+        ctx.fillStyle = ['#d46a9a', '#d4b13a', '#7a9ad4'][Math.floor(hash2(tx + 9, ty) * 3)];
+        ctx.fillRect(x + 8 + hash2(tx, ty + 3) * 12, y + 8 + hash2(tx + 5, ty) * 12, 3, 3);
       }
       if (t === TERRAIN.SAND) {
         if (v < 0.3) { ctx.fillStyle = 'rgba(150,120,70,0.5)'; ctx.fillRect(x + 8 + hash2(tx, ty) * 16, y + 10 + hash2(tx + 3, ty) * 16, 2, 2); }
@@ -1061,7 +1156,54 @@ const EXPGUI = {
     };
     put(this.shopSpr, World.BUILDINGS[0].x, World.BUILDINGS[0].y, 4, 3, '🛒 Loja [E]');
     put(this.churchSpr, World.BUILDINGS[1].x, World.BUILDINGS[1].y, 4, 3, '⛪ Igreja [E]');
-    put(this.workshopSpr, World.BUILDINGS[2].x, World.BUILDINGS[2].y, 3, 3, '🏗️ Hub [E]');
+    put(this.workshopSpr, World.BUILDINGS[2].x, World.BUILDINGS[2].y, 3, 3, '🏗️ Construção [E]');
+    put(this.tradeSpr, World.BUILDINGS[3].x, World.BUILDINGS[3].y, 3, 3, '🐎 Comércio [E]');
+
+    // poço central
+    const wx = World.WELL.x * TILE - ox, wy = World.WELL.y * TILE - oy;
+    if (wx > -TILE * 2 && wy > -TILE * 2 && wx < this.screenW + TILE && wy < this.screenH + TILE) {
+      ctx.fillStyle = '#8b97a3'; ctx.fillRect(wx + 3, wy + 3, TILE - 6, TILE - 6);
+      ctx.fillStyle = '#3a4a5a'; ctx.fillRect(wx + 7, wy + 7, TILE - 14, TILE - 14);
+      ctx.fillStyle = '#5b3a1e'; ctx.fillRect(wx + 4, wy - 2, 4, 10); ctx.fillRect(wx + TILE - 8, wy - 2, 4, 10);
+      ctx.fillStyle = '#7a4f2a'; ctx.fillRect(wx + 2, wy - 6, TILE - 4, 5);
+      ctx.fillStyle = 'rgba(143,216,255,.8)'; ctx.fillRect(wx + TILE / 2 - 1, wy - 14, 2, 6);
+    }
+
+    // lampiões com brilho
+    for (const lamp of World.LAMPS) {
+      const lx = lamp.x * TILE + TILE / 2 - ox, ly = lamp.y * TILE + TILE / 2 - oy;
+      if (lx < -TILE || ly < -TILE || lx > this.screenW + TILE || ly > this.screenH + TILE) continue;
+      const glow = 0.5 + 0.2 * Math.sin(World.time * 2 + lamp.x);
+      ctx.fillStyle = 'rgba(246,196,83,' + (0.10 * glow) + ')';
+      ctx.beginPath(); ctx.arc(lx, ly - 14, 26, 0, 7); ctx.fill();
+      ctx.fillStyle = '#3a2c20'; ctx.fillRect(lx - 1, ly - 18, 3, 22);
+      ctx.fillStyle = '#f6c453'; ctx.fillRect(lx - 3, ly - 26, 7, 9);
+      ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(lx - 1, ly - 24, 2, 5);
+    }
+
+    // bandeiras nas torres do portão sul
+    for (const tx2 of [-2, 2]) {
+      const bx = tx2 * TILE + TILE / 2 - ox, by = (World.townR + 1) * TILE - oy;
+      if (bx < -TILE || by < -TILE * 2 || bx > this.screenW + TILE || by > this.screenH + TILE) continue;
+      ctx.fillStyle = '#5b3a1e'; ctx.fillRect(bx - 1, by - 26, 2, 26);
+      const wave = Math.sin(World.time * 3 + tx2) * 2;
+      ctx.fillStyle = tx2 < 0 ? '#c0392b' : '#3f8ef0';
+      ctx.beginPath();
+      ctx.moveTo(bx + 1, by - 26);
+      ctx.lineTo(bx + 16, by - 22 + wave);
+      ctx.lineTo(bx + 1, by - 16);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // carroças estacionadas enquanto há caravanas em viagem
+    const caravans = (typeof Trade !== 'undefined' ? Trade.load() : []).length;
+    for (let i = 0; i < caravans; i++) {
+      const cx2 = (World.BUILDINGS[3].x + World.BUILDINGS[3].w / 2) * TILE - ox + (i - 0.5) * 30;
+      const cy2 = (World.BUILDINGS[3].y + World.BUILDINGS[3].h + 0.6) * TILE - oy + Math.sin(World.time * 2 + i) * 2;
+      if (cx2 < -TILE || cy2 < -TILE || cx2 > this.screenW + TILE || cy2 > this.screenH + TILE) continue;
+      ctx.font = '18px serif'; ctx.textAlign = 'center';
+      ctx.fillText('🐎', cx2, cy2);
+    }
     // Slayer Master
     const smx = World.NPC_HOME.x * TILE + 16 - ox, smy = World.NPC_HOME.y * TILE + 16 - oy;
     if (smx > -60 && smy > -60 && smx < this.screenW + 60 && smy < this.screenH + 60) {
@@ -1097,6 +1239,43 @@ const EXPGUI = {
           ctx.font = Math.round(8 + frac * 8) + 'px serif'; ctx.textAlign = 'center';
           ctx.fillText('🌱', x + TILE / 2, y + TILE / 2 + 4 * frac);
         }
+      }
+    }
+  },
+
+  /** Obstáculos do circuito de agilidade (anel fora da muralha). */
+  drawObstacles(ctx, ox, oy) {
+    const course = Agility.currentCourse();
+    for (const ob of World.obstacles || []) {
+      const x = ob.x - ox, y = ob.y - oy;
+      if (x < -TILE || y < -TILE || x > this.screenW + TILE || y > this.screenH + TILE) continue;
+      if (ob.kind === 'log') {
+        ctx.fillStyle = '#7a4f2a'; ctx.fillRect(x - 16, y - 5, 32, 10);
+        ctx.fillStyle = '#5b3a1e'; ctx.fillRect(x - 16, y - 5, 32, 3); ctx.fillRect(x - 16, y + 2, 32, 3);
+      } else if (ob.kind === 'wall') {
+        ctx.fillStyle = '#8b97a3'; ctx.fillRect(x - 14, y - 14, 28, 28);
+        ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(x - 14, y - 14, 28, 4); ctx.fillRect(x - 14, y + 2, 28, 4);
+      } else if (ob.kind === 'beam') {
+        ctx.fillStyle = '#c9a05a'; ctx.fillRect(x - 18, y - 3, 36, 6);
+        ctx.fillStyle = '#5b3a1e'; ctx.fillRect(x - 18, y + 3, 4, 8); ctx.fillRect(x + 14, y + 3, 4, 8);
+      } else { // pipe
+        ctx.fillStyle = '#5a6480'; ctx.fillRect(x - 13, y - 12, 26, 24);
+        ctx.fillStyle = '#454e66'; ctx.beginPath(); ctx.ellipse(x, y - 12, 13, 6, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = '#232733'; ctx.beginPath(); ctx.ellipse(x, y - 12, 8, 3, 0, 0, 7); ctx.fill();
+      }
+      if (ob.cd > 0) { ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff'; ctx.fillRect(x - 12, y - 12, 24, 24); ctx.globalAlpha = 1; }
+    }
+    // placa do circuito perto do portão
+    const sign = World.obstacles?.[0];
+    if (sign) {
+      const sx = sign.x - ox, sy = sign.y - oy;
+      if (sx > -100 && sx < this.screenW + 100 && sy > -100 && sy < this.screenH + 100) {
+        ctx.font = 'bold 10px "Courier New"'; ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,.6)';
+        const label = '🤸 ' + course.def.display_name + ' [E]';
+        const w = ctx.measureText(label).width + 10;
+        ctx.fillRect(sx - w / 2, sy - 34, w, 15);
+        ctx.fillStyle = '#8fd8ff'; ctx.fillText(label, sx, sy - 23);
       }
     }
   },
@@ -1187,7 +1366,7 @@ const EXPGUI = {
       const px = mx + half + (tx - pcx) * scl, py = my + half + (ty - pcy) * scl;
       ctx.fillStyle = dungeon
         ? (t === TERRAIN.WATER ? '#1c202b' : t === TERRAIN.SAND ? '#8a7345' : '#454b5e')
-        : (t === TERRAIN.WATER ? '#2f6fb0' : t === TERRAIN.SAND ? '#d8c084' : t === TERRAIN.GRASS2 ? '#3f7a37' : '#4c8a40');
+        : (World.wallAt(tx, ty) ? '#8d939e' : t === TERRAIN.WATER ? '#2f6fb0' : t === TERRAIN.SAND ? '#d8c084' : t === TERRAIN.GRASS2 ? '#3f7a37' : '#4c8a40');
       ctx.fillRect(px, py, scl, scl);
       if (!dungeon) {
         const key = tx + ',' + ty;
