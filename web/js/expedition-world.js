@@ -7,81 +7,74 @@
 'use strict';
 
 const TILE = 32, SCALE = 2;
-const TERRAIN = { WATER: 0, SAND: 1, GRASS: 2, GRASS2: 3 };
+// TERRAIN / SOLID_TERRAIN / WATER_TERRAIN vêm de expedition-worldgen.js
 
 const World = {
   mode: 'overworld',          // overworld | dungeon
   dungeonKey: null,           // dungeon ativo
   dungeonKills: 0,
   dungeonFoodEaten: 0,
+  dungeonLayout: null,        // layout gerado pelo tema da dungeon
   enemies: [], bosses: [], particles: [], floats: [], projectiles: [], npcs: [],
   resources: new Map(), regrowing: new Map(),
   terrainCache: new Map(), enemySprites: new Map(),
   gates: [],                  // entradas de dungeon no overworld
   camera: { x: 0, y: 0, shake: 0, sx: 0, sy: 0 },
   time: 0,
-  townR: 13,                  // raio da cidade (tiles)
+  townR: 19,                  // raio da capital (tiles)
   heroSprites: null,
   player: null,
   interactTarget: null,       // {label, sub, action}
   autoEat: true,
   sessionCoins: 0,
+  ambient: [],                // partículas de clima do bioma/dungeon
+  _ambientT: 0,
 
-  /* ---------------- terreno ---------------- */
+  /* ---------------- terreno & biomas ---------------- */
 
+  /** Capital (compatibilidade: "a cidade" = Aurélia). */
   inTown(tx, ty) { return Math.hypot(tx, ty) <= this.townR; },
+  /** Qualquer assentamento (capital, reinos, vilas, postos). */
+  settlementAt(tx, ty, pad = 0) { return WorldGen.settlementAt(tx, ty, pad); },
+  get SETTLEMENTS() { return WorldGen.SETTLEMENTS; },
+  capital() { return WorldGen.SETTLEMENTS[0]; },
+
+  biomeAt(tx, ty) { return WorldGen.biomeAt(tx, ty); },
+  regionAt(tx, ty) { return WorldGen.regionAt(tx, ty); },
+  roadAt(tx, ty) { return WorldGen.roadAt(tx, ty); },
 
   terrainAt(tx, ty) {
     if (this.mode === 'dungeon') return this.dungeonTerrainAt(tx, ty);
     const key = tx + ',' + ty;
     const c = this.terrainCache.get(key);
     if (c !== undefined) return c;
-    let t;
-    if (this.inTown(tx, ty)) t = TERRAIN.GRASS;           // praça da cidade
-    else {
-      const e = fbm(tx * 0.045, ty * 0.045, 4);
-      if (e < 0.32) t = TERRAIN.WATER;
-      else if (e < 0.355) t = TERRAIN.SAND;
-      else t = (fbm(tx * 0.06 + 100, ty * 0.06 + 100, 3) > 0.58 ? TERRAIN.GRASS2 : TERRAIN.GRASS);
-    }
+    const t = WorldGen.terrainAt(tx, ty);
+    if (this.terrainCache.size > 200000) this.terrainCache.clear();
     this.terrainCache.set(key, t);
     return t;
   },
 
-  // ---- cidade: edifícios sólidos (retângulos em tiles) ----
-  // `name` é o rótulo localizado em tempo real; `nameEn` é o fallback inglês.
-  BUILDINGS: [
-    { key: 'shop', x: -8, y: -7, w: 4, h: 3, icon: '🛒', nameEn: 'General Store' },
-    { key: 'church', x: 4, y: -7, w: 4, h: 3, icon: '⛪', nameEn: 'Church' },
-    { key: 'workshop', x: -8, y: 2, w: 3, h: 3, icon: '🏗️', nameEn: 'Workshop (Hub)' },
-    { key: 'trade', x: 3, y: 2, w: 3, h: 3, icon: '🐎', nameEn: 'Trade Post' },
-  ],
-  WELL: { x: 0, y: -2 },                                // poço central (sólido)
-  LAMPS: [{ x: -4, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 4 }, { x: -3, y: -5 }, { x: 3, y: -5 }],
-  NPC_HOME: { x: 0, y: 3 },       // Slayer Master fica parado aqui
-  PORTAL: { x: 6, y: 4 },         // portal para o modo Hub
-  FARM_SPOTS: [{ x: -3, y: 6 }, { x: -1, y: 6 }, { x: 1, y: 6 }, { x: 3, y: 6 }, { x: 5, y: 6 }],
+  isWater(tx, ty) { return WATER_TERRAIN.has(this.terrainAt(tx, ty)); },
 
-  buildingAt(tx, ty) {
-    for (const b of this.BUILDINGS) if (tx >= b.x && tx < b.x + b.w && ty >= b.y && ty < b.y + b.h) return b;
-    return null;
-  },
+  // ---- edifícios sólidos de TODOS os assentamentos (retângulos em tiles) ----
+  // `name` é o rótulo localizado em tempo real; `nameEn` é o fallback inglês.
+  get BUILDINGS() { WorldGen.init(); return WorldGen.buildings; },
+
+  WELL: { x: 0, y: -3 },                                // fonte central (sólida)
+  LAMPS: [{ x: -6, y: 0 }, { x: 6, y: 0 }, { x: 0, y: 6 }, { x: -5, y: -7 }, { x: 5, y: -7 },
+    { x: -9, y: 7 }, { x: 9, y: 7 }, { x: 0, y: -12 }],
+  NPC_HOME: { x: 0, y: 6 },       // Slayer Master fica parado aqui
+  PORTAL: { x: 7, y: 7 },         // portal para o modo Hub
+  FARM_SPOTS: [{ x: -6, y: 13 }, { x: -4, y: 13 }, { x: -2, y: 13 }, { x: 0, y: 13 }, { x: 2, y: 13 }],
+
+  buildingAt(tx, ty) { return WorldGen.buildingAt(tx, ty); },
   portalTile(tx, ty) { return tx === this.PORTAL.x && ty === this.PORTAL.y; },
 
-  /* ---- muralha medieval: anel de pedra ao redor da cidade ---- */
+  /* ---- muralhas: anéis de pedra/gelo/arenito ao redor das cidades ---- */
 
-  /** Tile da muralha? Anel entre townR+0.6 e townR+1.6, com portão sul aberto. */
-  wallAt(tx, ty) {
-    const r = Math.hypot(tx, ty);
-    if (r < this.townR + 0.6 || r > this.townR + 1.6) return false;
-    // Portão sul: abertura de 3 tiles + estrada
-    if (ty > 0 && Math.abs(tx) <= 1 && ty >= this.townR) return false;
-    return true;
-  },
-  gateTowerAt(tx, ty) {
-    return (Math.abs(Math.hypot(tx, ty) - (this.townR + 1.1)) < 0.9) &&
-      ty > 0 && Math.abs(tx) >= 1.6 && Math.abs(tx) <= 2.6;
-  },
+  /** Tile de muralha (qualquer assentamento murado), com portões abertos. */
+  wallAt(tx, ty) { return WorldGen.wallAt(tx, ty); },
+  gateTowerAt(tx, ty) { return WorldGen.gateTowerAt(tx, ty); },
 
   farmSpotAt(tx, ty) {
     for (let i = 0; i < this.FARM_SPOTS.length; i++) {
@@ -91,37 +84,28 @@ const World = {
     return -1;
   },
 
-  // ---- dungeon instanciada ----
+  // ---- dungeon instanciada (layout do tema) ----
+  dungeonLayoutFor(key) {
+    return DungeonGen.layout(key, GameData.dungeons[key]);
+  },
+  dungeonTheme() {
+    return this.dungeonLayout ? this.dungeonLayout.theme : DungeonGen.theme(this.dungeonKey, GameData.dungeons[this.dungeonKey]);
+  },
   dungeonTerrainAt(tx, ty) {
-    const key = 'D' + tx + ',' + ty;
-    const c = this.terrainCache.get(key);
-    if (c !== undefined) return c;
-    const r = Math.hypot(tx, ty);
-    let t;
-    if (r < 4.2) t = TERRAIN.SAND;                       // área de entrada garantida
-    else {
-      const n = fbm(tx * 0.09 + 500, ty * 0.09 + 500, 4);
-      t = n > 0.52 ? TERRAIN.WATER : TERRAIN.GRASS2;     // WATER = parede rochosa
-    }
-    // salas esculpidas para não ficar um corredor só
-    for (let i = 0; i < 6; i++) {
-      const rx = (hash2(i * 17.3, 7.7) - 0.5) * 46, ry = (hash2(i * 9.1, 3.3) - 0.5) * 34;
-      if (Math.hypot(tx - rx, ty - ry) < 5.5) t = TERRAIN.GRASS2;
-    }
-    this.terrainCache.set(key, t);
-    return t;
+    if (!this.dungeonLayout && this.dungeonKey) this.dungeonLayout = this.dungeonLayoutFor(this.dungeonKey);
+    if (!this.dungeonLayout) return TERRAIN.FLOOR;
+    if (Math.hypot(tx, ty) < 4.2) return TERRAIN.FLOOR;   // entrada sempre livre
+    return DungeonGen.terrainAt(this.dungeonLayout, tx, ty);
   },
 
   solidTile(tx, ty) {
-    if (this.buildingAt(tx, ty)) return true;
-    if (this.WELL && tx === this.WELL.x && ty === this.WELL.y) return true;
-    if (this.mode === 'overworld' && this.wallAt(tx, ty)) return true;
-    if (this.terrainAt(tx, ty) === TERRAIN.WATER) return true;
     if (this.mode === 'overworld') {
-      const k = tx + ',' + ty;
-      if (this.resources.has(k)) return true;
+      if (this.buildingAt(tx, ty)) return true;
+      if (this.WELL && tx >= this.WELL.x - 1 && tx <= this.WELL.x + 1 && ty >= this.WELL.y - 1 && ty <= this.WELL.y + 1) return true;
+      if (this.wallAt(tx, ty)) return true;
+      if (this.resources.has(tx + ',' + ty)) return true;
     }
-    return false;
+    return SOLID_TERRAIN.has(this.terrainAt(tx, ty));
   },
   collidesRect(px, py, pw, ph) {
     const x0 = Math.floor(px / TILE), x1 = Math.floor((px + pw - 1) / TILE),
@@ -134,38 +118,44 @@ const World = {
 
   resourceAt(tx, ty) {
     if (this.mode === 'dungeon') return null;
-    if (Math.hypot(tx, ty) <= this.townR + 2.6) return null;   // cidade murada + fossos: sem nós
+    // nenhum nó dentro/junto de cidades, nem em cima das estradas
+    if (this.settlementAt(tx, ty, 3.2)) return null;
+    if (this.roadAt(tx, ty)) return null;
     if (this.gateTiles && this.gateTiles.has(tx + ',' + ty)) return null;
     const t = this.terrainAt(tx, ty);
-    if (t === TERRAIN.WATER) return null;
+    if (SOLID_TERRAIN.has(t) || t === TERRAIN.ROAD || t === TERRAIN.PLAZA) return null;
+    const biome = this.biomeAt(tx, ty);
     const r = hash2(tx * 7.13 + 3.7, ty * 13.7 + 5.1);
-    const m = fbm(tx * 0.06 + 100, ty * 0.06 + 100, 3);
-    if (m > 0.55 && r < 0.20) {
-      // árvore: tier pela hash (mais alto = mais raro)
+
+    // ---- árvores: densidade e espécie dependem do bioma ----
+    const tcfg = biome.tree;
+    if (tcfg && tcfg.chance > 0 && r < tcfg.chance) {
       const rr = hash2(tx * 3.1, ty * 5.7);
       const n = EXP.TREES.length;
-      let ti = 0;
-      if (rr < 0.55) ti = 0; else if (rr < 0.72) ti = 1; else if (rr < 0.82) ti = 2;
-      else if (rr < 0.89) ti = 3; else if (rr < 0.94) ti = 4; else if (rr < 0.975) ti = 5; else ti = Math.min(6, n - 1);
-      return { kind: 'tree', id: ti };
+      // bias do bioma empurra a espécie para tiers melhores (selva/arcano = madeiras nobres)
+      const pos = XU.clamp(Math.pow(rr, 1.8) * 0.55 + tcfg.bias * 0.85, 0, 0.999);
+      const ti = Math.min(n - 1, Math.floor(pos * n));
+      return { kind: 'tree', id: ti, style: tcfg.palm ? 'palm' : tcfg.pine ? 'pine' : tcfg.dead ? 'dead' : tcfg.acacia ? 'acacia' : 'oak' };
     }
-    if (r < 0.10) {
-      // rocha: minério ponderado pelo nível + distância da cidade (mais longe = melhor)
+
+    // ---- rochas: minério ponderado pelo bioma + distância da capital ----
+    const ocfg = biome.ore;
+    if (ocfg && ocfg.chance > 0 && r >= 0.5 && r < 0.5 + ocfg.chance) {
       const dist = Math.hypot(tx, ty);
-      const far = XU.clamp((dist - 20) / 90, 0, 1);
+      const far = XU.clamp((dist - 20) / 120, 0, 1);
       const rr = hash2(tx * 5.1, ty * 7.7);
-      if (rr < 0.012) return { kind: 'rock', ore: 'essence' };   // essência rúnica rara
+      if (rr < 0.012 + ocfg.bias * 0.02) return { kind: 'rock', ore: 'essence' };   // essência rúnica
       const O = EXP.ORES;
-      // pesos: minérios baixos comuns; altos só longe da cidade
+      const target = XU.clamp(far * 0.55 + ocfg.bias * 0.55, 0, 1);
       let weights = O.map((o, i) => {
         const pos = i / Math.max(1, O.length - 1);
-        return Math.max(0.02, 1 - Math.abs(pos - far * 0.85) * 1.6) * (pos > far + 0.25 ? 0.05 : 1);
+        return Math.max(0.02, 1 - Math.abs(pos - target) * 1.9);
       });
-      const total = weights.reduce((a, b) => a + b, 0);
-      let roll = rr / 0.10 * total;
+      const total = weights.reduce((x, y) => x + y, 0);
+      let roll = ((rr * 997) % 1) * total;
       let oi = 0;
       for (let i = 0; i < O.length; i++) { roll -= weights[i]; if (roll <= 0) { oi = i; break; } }
-      return { kind: 'rock', ore: oi };
+      return { kind: 'rock', ore: oi, biome: biome.key };
     }
     return null;
   },
@@ -183,7 +173,7 @@ const World = {
   makeResource(tx, ty, ra) {
     const hp = ra.kind === 'tree' ? 3 : 4;
     return {
-      tx, ty, kind: ra.kind,
+      tx, ty, kind: ra.kind, style: ra.style || null, biome: ra.biome || null,
       id: ra.kind === 'tree' ? ra.id : (ra.ore === 'essence' ? 'essence' : ra.ore),
       x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2,
       hp, maxHp: hp, hitT: 0,
@@ -193,28 +183,95 @@ const World = {
   /* ---------------- entradas de dungeon ---------------- */
 
   buildGates() {
+    WorldGen.init();
     this.gates = [];
     const list = GameData.dungeonList();
-    list.forEach((d, i) => {
-      const ang = hash2(i * 12.9, 4.2) * Math.PI * 2;
-      const dist = 22 + i * 4.2;
-      let tx = Math.round(Math.cos(ang) * dist), ty = Math.round(Math.sin(ang) * dist);
-      // empurra para fora da água
-      for (let t = 0; t < 40 && this.terrainAt(tx, ty) === TERRAIN.WATER; t++) {
-        tx = Math.round(tx * 1.12) + 1; ty = Math.round(ty * 1.05) - 1;
-      }
-      this.gates.push({ key: d.name, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, tx, ty, idx: i });
+    // dungeons ordenadas por nível: as fáceis perto da capital, as lendárias
+    // no fundo do bioma temático (vulcão, geleira, selva, vazio…).
+    const sorted = list.slice().sort((a, b) => (a.recommended_level || 1) - (b.recommended_level || 1));
+    sorted.forEach((d, order) => {
+      const theme = DungeonGen.theme(d.name, d);
+      const i = list.indexOf(d);
+      const spot = this.placeGate(d, theme, order, sorted.length);
+      this.gates.push({
+        key: d.name, x: spot.tx * TILE + TILE / 2, y: spot.ty * TILE + TILE / 2,
+        tx: spot.tx, ty: spot.ty, idx: i, theme, biome: WorldGen.biomeKeyAt(spot.tx, spot.ty),
+      });
     });
+    this.gates.sort((a, b) => a.idx - b.idx);
+    this.buildGateTrails();
+  },
+
+  /** Trilha de terra ligando cada portal à malha de estradas (garante acesso). */
+  buildGateTrails() {
+    for (const g of this.gates) {
+      let best = null, bd = Infinity;
+      for (const r of WorldGen.roads) {
+        if (r.trail) continue;
+        for (let t = 0; t <= 1; t += 0.1) {
+          const px = r.a.x + (r.b.x - r.a.x) * t, py = r.a.y + (r.b.y - r.a.y) * t;
+          const d = Math.hypot(px - g.tx, py - g.ty);
+          if (d < bd) { bd = d; best = { x: px, y: py }; }
+        }
+      }
+      if (!best) best = { x: 0, y: 0 };
+      WorldGen.roads.push({ a: { x: g.tx, y: g.ty }, b: best, minor: true, trail: true, to: g.key });
+    }
+    this.terrainCache.clear();
+  },
+
+  /** Procura um tile livre no bioma preferido do tema (fallback: anel por nível). */
+  placeGate(d, theme, order, total) {
+    const want = theme.biome;
+    const region = WorldGen.REGIONS.find(r => r.core === want || (r.mix || []).includes(want));
+    const lvl = d.recommended_level || 1;
+    const baseDist = 26 + XU.clamp(lvl / 90, 0, 1) * 120;
+    const seed = hashStr('gate:' + d.name);
+    const rng = mulberry32(seed);
+    const cand = [];
+    if (region) {
+      for (let i = 0; i < 260; i++) {
+        const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * region.r * 0.85;
+        const tx = Math.round(region.x + Math.cos(a) * rr), ty = Math.round(region.y + Math.sin(a) * rr);
+        if (WorldGen.biomeKeyAt(tx, ty) !== want) continue;
+        if (this.badGateSpot(tx, ty)) continue;
+        cand.push({ tx, ty });
+        if (cand.length > 3) break;
+      }
+    }
+    if (cand.length) return cand[0];
+    // fallback: anel em espiral pelo nível
+    for (let i = 0; i < 400; i++) {
+      const a = (order / Math.max(1, total)) * Math.PI * 2 + i * 0.31;
+      const dist = baseDist + i * 1.1;
+      const tx = Math.round(Math.cos(a) * dist), ty = Math.round(Math.sin(a) * dist);
+      if (!this.badGateSpot(tx, ty)) return { tx, ty };
+    }
+    return { tx: 30 + order * 3, ty: 0 };
+  },
+
+  badGateSpot(tx, ty) {
+    if (this.settlementAt(tx, ty, 5)) return true;
+    if (WorldGen.roadAt(tx, ty)) return true;
+    if (SOLID_TERRAIN.has(WorldGen.terrainAt(tx, ty))) return true;
+    // precisa de espaço livre em volta (para o herói chegar)
+    let open = 0;
+    for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2]])
+      if (!SOLID_TERRAIN.has(WorldGen.terrainAt(tx + ox, ty + oy))) open++;
+    if (open < 6) return true;
+    for (const g of this.gates) if (Math.hypot(g.tx - tx, g.ty - ty) < 9) return true;
+    return false;
   },
 
   /** Anel de obstáculos de agilidade ao redor da muralha (fora dela). */
   buildObstacles() {
     this.obstacles = [];
-    const N = 8, R = this.townR + 5.2;
+    const N = 10, R = this.townR + 5.2;
     for (let i = 0; i < N; i++) {
       const ang = (i / N) * Math.PI * 2 + 0.39;
-      const tx = Math.round(Math.cos(ang) * R), ty = Math.round(Math.sin(ang) * R);
-      if (Math.abs(tx) <= 2 && ty > this.townR - 1) continue;  // não bloqueia o portão sul
+      let tx = Math.round(Math.cos(ang) * R), ty = Math.round(Math.sin(ang) * R);
+      if (Math.abs(tx) <= 2 || Math.abs(ty) <= 2) continue;    // não bloqueia os 4 portões
+      if (SOLID_TERRAIN.has(WorldGen.terrainAt(tx, ty))) continue;
       this.obstacles.push({
         tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2,
         kind: ['log', 'wall', 'beam', 'pipe'][i % 4], cd: 0,
@@ -254,16 +311,17 @@ const World = {
 
   /* ---------------- entidades ---------------- */
 
-  spriteFor(name) {
-    let s = this.enemySprites.get(name);
-    if (!s) { s = makeEnemySprite(name); this.enemySprites.set(name, s); }
+  spriteFor(key, name) {
+    const ck = key || name;
+    let s = this.enemySprites.get(ck);
+    if (!s) { s = makeEnemySprite(key, name); this.enemySprites.set(ck, s); }
     return s;
   },
 
   makeEnemy(enemyKey, x, y, isBoss = false, bossDef = null) {
     const def = bossDef || GameData.enemies[enemyKey];
     const hp = def.hp;
-    const spr = this.spriteFor(def.display_name || def.name);
+    const spr = this.spriteFor(enemyKey || def.name, def.display_name || def.name);
     return {
       key: enemyKey, name: def.display_name || def.name, def,
       hp, maxHp: hp, x, y, isBoss,
@@ -278,12 +336,12 @@ const World = {
     this.npcs = [];
     GameData.thievingNpcs.forEach((npc, i) => {
       const ang = hash2(i * 3.7, 9.9) * Math.PI * 2;
-      const dist = 4 + hash2(i * 8.8, 2.2) * 7;
+      const dist = 6 + hash2(i * 8.8, 2.2) * (World.townR - 9);
       this.npcs.push({
         def: npc, key: npc.key, name: npc.display_name,
         x: Math.cos(ang) * dist * TILE, y: Math.sin(ang) * dist * TILE,
         dirx: 0, diry: 0, wanderT: 0, cd: 0, animT: 0, frame: 0,
-        spr: this.spriteFor(npc.display_name),
+        spr: this.spriteFor(npc.key, npc.display_name),
       });
     });
   },
@@ -348,6 +406,60 @@ const World = {
     }
   },
   spawnFloat(x, y, text, color) { this.floats.push({ x, y, text, color: color || '#fff', life: 1.1 }); },
+
+  /* ---------------- clima / ambiente ---------------- */
+
+  /** Tipo de partícula ambiente no ponto atual (bioma no overworld, tema na dungeon). */
+  ambientKind() {
+    if (this.mode === 'dungeon') return this.dungeonTheme()?.ambient || null;
+    const b = this.biomeAt(Math.floor(this.player.x / TILE), Math.floor(this.player.y / TILE));
+    return b.ambient || null;
+  },
+
+  updateAmbient(dt) {
+    const kind = this.ambientKind();
+    this._ambientT -= dt;
+    const cfg = AMBIENT[kind];
+    if (cfg && this._ambientT <= 0) {
+      this._ambientT = cfg.every;
+      const p = this.player;
+      for (let i = 0; i < cfg.burst; i++) {
+        this.ambient.push({
+          kind, x: p.x + (Math.random() - 0.5) * 1000, y: p.y + (Math.random() - 0.5) * 760,
+          vx: cfg.vx + (Math.random() - 0.5) * cfg.spread, vy: cfg.vy + (Math.random() - 0.5) * cfg.spread,
+          life: cfg.life * (0.6 + Math.random() * 0.8), maxLife: cfg.life,
+          size: cfg.size * (0.6 + Math.random() * 0.9), color: cfg.color, seed: Math.random() * 6.28,
+        });
+      }
+    }
+    for (let i = this.ambient.length - 1; i >= 0; i--) {
+      const a = this.ambient[i];
+      a.life -= dt;
+      if (a.life <= 0 || Math.abs(a.x - this.player.x) > 900 || Math.abs(a.y - this.player.y) > 700) { this.ambient.splice(i, 1); continue; }
+      a.x += a.vx * dt + Math.sin(this.time * 1.6 + a.seed) * 6 * dt;
+      a.y += a.vy * dt;
+    }
+    if (this.ambient.length > 260) this.ambient.splice(0, this.ambient.length - 260);
+  },
+};
+
+/** Presets de clima: neve, brasas, esporos, vaga-lumes, areia, poeira… */
+const AMBIENT = {
+  snow: { every: 0.10, burst: 2, vx: -12, vy: 34, spread: 18, life: 6, size: 2.4, color: '#ffffff' },
+  ember: { every: 0.09, burst: 2, vx: 8, vy: -30, spread: 26, life: 3.2, size: 2.2, color: '#ff8a3c' },
+  ash: { every: 0.13, burst: 2, vx: -16, vy: 20, spread: 14, life: 6, size: 2, color: '#9a8f96' },
+  spore: { every: 0.14, burst: 2, vx: 6, vy: -8, spread: 16, life: 5.5, size: 2.6, color: '#9fd46f' },
+  firefly: { every: 0.22, burst: 1, vx: 0, vy: -4, spread: 22, life: 6, size: 2.6, color: '#d8ff8a' },
+  sand: { every: 0.06, burst: 3, vx: 78, vy: 8, spread: 30, life: 2.6, size: 1.8, color: '#e8d5a0' },
+  leaf: { every: 0.5, burst: 1, vx: 26, vy: 16, spread: 20, life: 5.5, size: 3, color: '#8fd46f' },
+  mote: { every: 0.18, burst: 2, vx: 0, vy: -14, spread: 18, life: 5, size: 2.2, color: '#bda6ff' },
+  drip: { every: 0.6, burst: 1, vx: 0, vy: 120, spread: 4, life: 1.6, size: 2, color: '#8fb4d8' },
+  dust: { every: 0.3, burst: 2, vx: 10, vy: -6, spread: 12, life: 5, size: 2, color: 'rgba(220,200,160,.8)' },
+  bubble: { every: 0.25, burst: 1, vx: 0, vy: -34, spread: 12, life: 4.5, size: 3, color: 'rgba(160,230,255,.75)' },
+  star: { every: 0.2, burst: 2, vx: 0, vy: -10, spread: 26, life: 5, size: 2.4, color: '#c9a6ff' },
+  shade: { every: 0.4, burst: 1, vx: 12, vy: -6, spread: 14, life: 5, size: 5, color: 'rgba(30,20,50,.55)' },
+  sunray: { every: 0.5, burst: 1, vx: -8, vy: 22, spread: 10, life: 5, size: 3, color: 'rgba(255,232,160,.8)' },
+  cloud: { every: 0.7, burst: 1, vx: 22, vy: 0, spread: 8, life: 8, size: 8, color: 'rgba(255,255,255,.55)' },
 };
 
 /* =====================================================================
@@ -740,7 +852,7 @@ const Gathering = {
     const v = Player.facingVec();
     const p = World.player;
     const tx = Math.floor((p.x + v.dx * TILE) / TILE), ty = Math.floor((p.y + v.dy * TILE) / TILE);
-    if (World.mode !== 'overworld' || World.terrainAt(tx, ty) !== TERRAIN.WATER) return false;
+    if (World.mode !== 'overworld' || !WATER_TERRAIN.has(World.terrainAt(tx, ty))) return false;
     const ctx = EXP.ctx();
     p.attackCd = Math.max(0.5, EXP.attackIntervalSec(ctx)); p.attackTimer = 0.22;
     SFX.fish();
@@ -806,7 +918,7 @@ const Thieving = {
       }
       const spd = 34;
       const nx = npc.x + npc.dirx * spd * dt, ny = npc.y + npc.diry * spd * dt;
-      if (!World.collidesRect(nx - 6, ny - 6, 12, 12) && Math.hypot(nx, ny) < (World.townR - 1) * TILE) { npc.x = nx; npc.y = ny; }
+      if (!World.collidesRect(nx - 6, ny - 6, 12, 12) && Math.hypot(nx, ny) < (World.townR - 2) * TILE) { npc.x = nx; npc.y = ny; }
       if (npc.dirx || npc.diry) { npc.animT += dt; if (npc.animT > 0.3) { npc.animT = 0; npc.frame ^= 1; } }
     }
   },
@@ -925,6 +1037,8 @@ const Dungeons = {
     }
     World.mode = 'dungeon'; World.dungeonKey = gate.key;
     World.dungeonKills = 0; World.dungeonFoodEaten = 0;
+    World.dungeonLayout = World.dungeonLayoutFor(gate.key);
+    World.ambient = [];
     World.terrainCache.clear(); World.resources.clear(); World.regrowing.clear();
     World.enemies = []; World.projectiles = []; World.bosses = [];
     const p = World.player; p.x = TILE / 2 + 6; p.y = TILE / 2 + 6; p.facing = 'down';
@@ -952,7 +1066,8 @@ const Dungeons = {
       EXPGUI.toast(tt('web_exp_toast_run_short'));
     }
     const gate = World.gates.find(g => g.key === World.dungeonKey);
-    World.mode = 'overworld'; World.dungeonKey = null;
+    World.mode = 'overworld'; World.dungeonKey = null; World.dungeonLayout = null;
+    World.ambient = [];
     World.terrainCache.clear(); World.resources.clear(); World.regrowing.clear();
     World.enemies = []; World.projectiles = [];
     const p = World.player;
@@ -1010,6 +1125,7 @@ function worldUpdate(dt) {
   } else { World.camera.sx = 0; World.camera.sy = 0; }
   if (World.mode === 'overworld') World.ensureResources();
   World.ensureEnemies(dt);
+  World.updateAmbient(dt);
 }
 function updateParticles(dt) {
   for (let i = World.particles.length - 1; i >= 0; i--) {
