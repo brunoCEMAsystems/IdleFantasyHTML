@@ -311,16 +311,17 @@ const World = {
 
   /* ---------------- entidades ---------------- */
 
-  spriteFor(name) {
-    let s = this.enemySprites.get(name);
-    if (!s) { s = makeEnemySprite(name); this.enemySprites.set(name, s); }
+  spriteFor(key, name) {
+    const ck = key || name;
+    let s = this.enemySprites.get(ck);
+    if (!s) { s = makeEnemySprite(key, name); this.enemySprites.set(ck, s); }
     return s;
   },
 
   makeEnemy(enemyKey, x, y, isBoss = false, bossDef = null) {
     const def = bossDef || GameData.enemies[enemyKey];
     const hp = def.hp;
-    const spr = this.spriteFor(def.display_name || def.name);
+    const spr = this.spriteFor(enemyKey || def.name, def.display_name || def.name);
     return {
       key: enemyKey, name: def.display_name || def.name, def,
       hp, maxHp: hp, x, y, isBoss,
@@ -340,7 +341,7 @@ const World = {
         def: npc, key: npc.key, name: npc.display_name,
         x: Math.cos(ang) * dist * TILE, y: Math.sin(ang) * dist * TILE,
         dirx: 0, diry: 0, wanderT: 0, cd: 0, animT: 0, frame: 0,
-        spr: this.spriteFor(npc.display_name),
+        spr: this.spriteFor(npc.key, npc.display_name),
       });
     });
   },

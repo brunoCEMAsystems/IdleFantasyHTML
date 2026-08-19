@@ -57,11 +57,15 @@ const EXPGUI = {
   },
 
   buildHeroSprites() {
-    const hero = {};
-    for (const k in HERO_ROWS) hero[k] = makeSprite(HERO_ROWS[k], HPAL);
-    hero.left0 = flipSprite(hero.side0); hero.left1 = flipSprite(hero.side1);
-    hero.right0 = hero.side0; hero.right1 = hero.side1;
-    World.heroSprites = hero;
+    this.appearance = Appearance.load();
+    World.heroSprites = HeroArt.build(this.appearance);
+  },
+
+  /** Reconstrói o herói depois de mudar a aparência. */
+  applyAppearance(app, persist) {
+    this.appearance = app;
+    World.heroSprites = HeroArt.build(app);
+    if (persist) Appearance.save(app);
   },
 
   buildSprites() {
@@ -173,11 +177,15 @@ const EXPGUI = {
         }
         if (k === 'q' || k === 'Q') this.cycleStyle();
         if (k === 'm' || k === 'M') this.toggleBigMap();
+        if (k === 'v' || k === 'V') this.toggleAppearance();
         if (k === 'b' || k === 'B' || k === 'c' || k === 'C' || k === 'Escape') {
           if (!document.getElementById('bigmap').classList.contains('hidden')) this.toggleBigMap();
           else this.toggleJournal();
         }
-      } else if (this.state === 'menu') { if (k === 'Enter' || k === ' ') this.startGame(); }
+      } else if (this.state === 'menu') {
+        if (k === 'Enter' || k === ' ') this.startGame();
+        if (k === 'v' || k === 'V') this.toggleAppearance();
+      }
       else if (this.state === 'dead') { if (k === 'Enter' || k === ' ' || k === 'r' || k === 'R') this.respawn(); }
     });
     window.addEventListener('keyup', e => { this.keys[e.key] = false; });
@@ -221,6 +229,19 @@ const EXPGUI = {
     document.getElementById('hubbtn').addEventListener('click', () => this.gotoHub());
     document.getElementById('respawnbtn').addEventListener('click', () => this.respawn());
     document.getElementById('closejournal').addEventListener('click', () => this.toggleJournal());
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    on('appbtn', () => this.toggleAppearance(true));
+    on('appchip', () => this.toggleAppearance(true));
+    on('apprandom', () => { this._appDraft = Appearance.random(); this.renderAppearance(); SFX.levelup(); });
+    on('appreset', () => { this._appDraft = Object.assign({}, Appearance.DEFAULT); this.renderAppearance(); SFX.buy(); });
+    on('appsave', () => {
+      this.applyAppearance(Object.assign({}, this._appDraft), true);
+      this.toggleAppearance(false);
+      this.showMenuHero();
+      this.toast(tt('web_exp_app_saved', null, 'Hero appearance saved'));
+      SFX.levelup();
+    });
+    on('appcancel', () => this.toggleAppearance(false));
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('contextmenu', e => e.preventDefault());
     document.addEventListener('visibilitychange', () => { if (document.hidden) { State.save(); this.savePos(); } });
@@ -594,6 +615,77 @@ const EXPGUI = {
       if (ns) this.toast(tt('web_exp_queue_started', [ns.label || 'session']));
       this.rQueuePanel(); this.updateQueueChips();
     }
+  },
+
+  /* ====================== PERSONALIZAÇÃO DO HERÓI [V] ====================== */
+
+  toggleAppearance(force) {
+    const el = document.getElementById('appearance');
+    if (!el) return;
+    const opening = force !== undefined ? force : el.classList.contains('hidden');
+    if (opening) {
+      document.getElementById('journal').classList.add('hidden');
+      document.getElementById('bigmap').classList.add('hidden');
+      el.classList.remove('hidden');
+      if (this.state === 'playing') this.paused = true;
+      this._appDraft = Object.assign({}, this.appearance || Appearance.load());
+      this.renderAppearance();
+      this.appLoop();
+    } else {
+      el.classList.add('hidden');
+      if (this.state === 'playing') this.paused = false;
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._appRaf);
+    }
+  },
+
+  /** Lista de opções + preview animado. */
+  renderAppearance() {
+    const box = document.getElementById('approws');
+    if (!box) return;
+    box.innerHTML = '';
+    const app = this._appDraft;
+    for (const f of Appearance.fields()) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const val = app[f.key] % f.n;
+      const label = f.swatch
+        ? (f.swatch[val] ? '<span class="dot" style="background:' + f.swatch[val] + '"></span>' : tt('web_exp_app_none', null, 'None'))
+        : tt('web_exp_app_opt_' + (f.names ? f.names[val] : val), null, f.names ? f.names[val] : String(val + 1));
+      row.innerHTML = '<span class="nm">' + f.label + '</span>' +
+        '<span class="side"><button class="buybtn" data-d="-1">◀</button>' +
+        '<span style="min-width:96px;text-align:center">' + label + ' <b>' + (val + 1) + '/' + f.n + '</b></span>' +
+        '<button class="buybtn" data-d="1">▶</button></span>';
+      row.querySelectorAll('button').forEach(btn => {
+        btn.onclick = () => {
+          const d = +btn.dataset.d;
+          app[f.key] = (app[f.key] + d + f.n) % f.n;
+          SFX.buy();
+          this.renderAppearance();
+        };
+      });
+      box.appendChild(row);
+    }
+  },
+
+  /** Preview: herói andando nas quatro direções. */
+  appLoop() {
+    const cv = document.getElementById('appcv');
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const draw = () => {
+      if (document.getElementById('appearance').classList.contains('hidden')) return;
+      const set = HeroArt.build(this._appDraft);
+      const t = Date.now() / 260 | 0;
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      const dirs = ['down', 'left', 'right', 'up'];
+      dirs.forEach((d, i) => {
+        const spr = set[d + (t % 2)];
+        ctx.drawImage(spr, 8 + i * 62, 6, 16 * 3.4, 16 * 3.4);
+      });
+      this._appRaf = requestAnimationFrame(draw);
+    };
+    draw();
   },
 
   /* ============================ MAPA GRANDE [M] ============================ */
@@ -1598,8 +1690,13 @@ const EXPGUI = {
     // Slayer Master
     const smx = World.NPC_HOME.x * TILE + 16 - ox, smy = World.NPC_HOME.y * TILE + 16 - oy;
     if (smx > -60 && smy > -60 && smx < this.screenW + 60 && smy < this.screenH + 60) {
-      ctx.font = '22px serif'; ctx.textAlign = 'center';
-      ctx.fillText('🗡️', smx, smy + 8);
+      const sm = Bestiary.spriteFor('slayer_master', 'Slayer Master');
+      const spr = (Math.floor(World.time * 2) % 2) ? sm.b : sm.a;
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      ctx.beginPath(); ctx.ellipse(smx, smy + 8, 9, 4, 0, 0, 7); ctx.fill();
+      ctx.drawImage(spr, smx - spr.width, smy - spr.height * 2 + 10, spr.width * 2, spr.height * 2);
+      ctx.font = '13px serif'; ctx.textAlign = 'center';
+      ctx.fillText('🗡️', smx + 14, smy);
       ctx.font = 'bold 11px "Courier New"'; ctx.fillStyle = '#ffd97a';
       ctx.fillText(tt('web_exp_town_label_slayer'), smx, smy - 16);
     }

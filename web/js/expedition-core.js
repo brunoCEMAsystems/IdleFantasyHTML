@@ -111,30 +111,8 @@ function shadeColor(hex, amt) {
   return 'rgb(' + XU.clamp(r, 0, 255) + ',' + XU.clamp(g, 0, 255) + ',' + XU.clamp(b, 0, 255) + ')';
 }
 
-const HPAL = { H: '#5b3a1e', h: '#7a4f2a', S: '#f4c79e', s: '#dda678', E: '#1c1c1c', C: '#c0392b', c: '#8e2c21', D: '#3a2c20', B: '#2a1f16' };
-const HERO_ROWS = {
-  down0: ["....HHHHHHHH....", "...HHHHHHHHHH...", "...HHHHHHHHHH...", "...HSSSSSSSSH...", "...HSESSSSESH...", "...HSSSSSSSSH...", "...HssSSSSssSH...", "....HHHHHHHH....", "....CCCCCCCC....", "...CCCCCCCCCC...", "...CCCCCCCCCC...", "....CCCCCCCC....", "....DDDDDDDD....", "....DDD..DDD....", "....DD....DD....", "....BB....BB...."],
-  down1: ["....HHHHHHHH....", "...HHHHHHHHHH...", "...HHHHHHHHHH...", "...HSSSSSSSSH...", "...HSESSSSESH...", "...HSSSSSSSSH...", "...HSSSSSSSSH...", "....HHHHHHHH....", "....CCCCCCCC....", "...CCCCCCCCCC...", "...CCCCCCCCCC...", "....CCCCCCCC....", "....DDDDDDDD....", "...DDD....DDD...", "...DD......DD...", "...BB......BB..."],
-  up0: ["....HHHHHHHH....", "...HHHHHHHHHH...", "...HHHHHHHHHH...", "...HSSSSSSSSH...", "...HSESSSSESH...", "...HSSSSSSSSH...", "...HSSSSSSSSH...", "....HHHHHHHH....", "....CCCCCCCC....", "...CCCCCCCCCC...", "...CCCCCCCCCC...", "....CCCCCCCC....", "....DDDDDDDD....", "....DDD..DDD....", "....DD....DD....", "....BB....BB...."],
-  up1: ["....HHHHHHHH....", "...HHHHHHHHHH...", "...HHHHHHHHHH...", "...HSSSSSSSSH...", "...HSESSSSESH...", "...HSSSSSSSSH...", "...HSSSSSSSSH...", "....HHHHHHHH....", "....CCCCCCCC....", "...CCCCCCCCCC...", "...CCCCCCCCCC...", "....CCCCCCCC....", "....DDDDDDDD....", "...DDD....DDD...", "...DD......DD...", "...BB......BB..."],
-  side0: ["....HHHHHHHH....", "...HHHHHHHHHH...", "...HHHHHHHHHH...", "...HSSSSSSSSH...", "...HSSSSSSESH...", "...HSSSSSSSSH...", "...HSSSSSSSSH...", "....HHHHHHHH....", ".....CCCCCC....", "....CCCCCCCC...", "....CCCCCCCC...", ".....CCCCCC....", ".....DDDDDD....", ".....DDDDD....", ".....DDDDD....", ".....BBBBB...."],
-  side1: ["....HHHHHHHH....", "...HHHHHHHHHH...", "...HHHHHHHHHH...", "...HSSSSSSSSH...", "...HSSSSSSESH...", "...HSSSSSSSSH...", "...HSSSSSSSSH...", "....HHHHHHHH....", ".....CCCCCC....", "....CCCCCCCC...", "....CCCCCCCC...", ".....CCCCCC....", ".....DDDDDD....", "....DDDDDD....", "....DDDDDD....", "....BBBBB...."],
-};
-const T_BLOB = ["................", "....bbbbbbbb....", "..bbbbbbbbbbbb..", ".bbbbbbbbbbbbbb.", ".bbEbbbbbbbbEbb.", "bbbbbbbbbbbbbbbb", "bbbbbbbbbbbbbbbb", "bbbbbbbbbbbbbbbb", ".bbbbbbbbbbbbbb.", "..bbbbbbbbbbbb..", "....bbbbbbbb....", "................"];
-const T_HUM = ["......bbbb......", "....bbbbbbbb....", "....bbbbbbbb....", "....bEEbbEEb....", "....bbbbbbbb....", "......bbbb......", "....dbbbbdb.....", "...dbbbbbbbd....", "....bbbbbbb.....", "....bdbdbdb.....", "...bbd..dbb.....", "...bb....bb....."];
-const T_BEAST = ["..................", "...bb........bb..", ".bbbbb......bbbb.", ".bbbbbbbbbbbbbbbb", ".bbEbbbbbbbbbbEbb", ".bbbbbbbbbbbbbbbb", "..bbbbbbbbbbbbbb.", "...bbbbbbbbbbbb..", ".....dbbbbbbd....", ".....dbb..bbd....", "......bb..bb....."];
-
-function makeEnemySprite(name) {
-  const h = hash2(name.length * 7.3, name.charCodeAt(0) * 3.1 + name.length);
-  const tmpl = h < 0.33 ? T_BLOB : (h < 0.66 ? T_HUM : T_BEAST);
-  const hue = Math.floor(hash2(name.length * 11.7, name.charCodeAt(1) || 5) * 360);
-  const base = hsl(hue, 0.6, 0.45);
-  const pal = { b: base, d: shadeColor('#808080', -60), E: '#fff', e: '#1c1c1c' };
-  const a = makeSprite(tmpl, pal);
-  const fb = document.createElement('canvas'); fb.width = a.width; fb.height = a.height;
-  const fg = fb.getContext('2d'); fg.drawImage(a, -1, 0); fg.drawImage(a, 1, 0);
-  return { a, b: fb, hue };
-}
+// Herói e criaturas agora são montados em expedition-sprites.js
+// (HeroArt para o herói customizável, Bestiary para cada espécie).
 
 // ============================================================
 // 2. INTEGRAÇÃO — dados reais + textos localizados (i18n do Hub)

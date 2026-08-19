@@ -83,6 +83,7 @@ const load = f => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..',
 
   console.log('— expedition scripts —');
   load('expedition-core.js');
+  load('expedition-sprites.js');
   load('expedition-worldgen.js');
   load('expedition-world.js');
   load('expedition-art.js');
@@ -184,6 +185,39 @@ const load = f => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..',
   check('gate walkable', World.solidTile(0, World.townR + 1) === false);
   check('no resources inside walls', World.resourceAt(World.townR - 4, World.townR - 5) === null);
   check('trade post exists', !!World.BUILDINGS.find(b => b.key === 'trade'));
+
+  console.log('— sprites & appearance —');
+  const allEnemyKeys = Object.keys(GameData.enemies);
+  check('every enemy has a species sprite', allEnemyKeys.every(k => !!Bestiary.spriteFor(k, GameData.enemies[k].display_name)));
+  const species = new Set(allEnemyKeys.map(k => Bestiary.spriteFor(k, GameData.enemies[k].display_name).species));
+  check('distinct species used (' + species.size + ')', species.size >= 20);
+  check('no enemy falls back to the generic humanoid blob', allEnemyKeys.filter(k => Bestiary.spriteFor(k).species === 'human').length <= 2);
+  check('bosses have sprites too', Object.keys(GameData.raidBosses).every(k => !!Bestiary.spriteFor(k, GameData.raidBosses[k].display_name)));
+  check('sprites are cached (same object)', Bestiary.spriteFor('goblin') === Bestiary.spriteFor('goblin'));
+  check('sprite has two animation frames', (() => { const s = Bestiary.spriteFor('goblin'); return s.a && s.b && s.a !== s.b; })());
+  check('creature art rows fit 16px', Object.values(CREATURE_ART).every(rows => rows.length <= 16 && rows.every(r => r.length <= 16)));
+  check('themed species match names', Bestiary.spriteFor('dragon').species === 'dragon' &&
+    Bestiary.spriteFor('spider').species === 'spider' && Bestiary.spriteFor('skeleton').species === 'skeleton' &&
+    Bestiary.spriteFor('chicken').species === 'chicken' && Bestiary.spriteFor('lich').species === 'lich');
+  check('unknown creatures are guessed by name', Bestiary.guess('ice_wolf_alpha', 'Ice Wolf Alpha').t === 'wolf');
+  check('town NPCs use the human builder', Bestiary.spriteFor('peasant').human === true);
+  // aparência do herói
+  const app = Appearance.load();
+  check('appearance defaults load', typeof app.skin === 'number' && typeof app.hairStyle === 'number');
+  check('appearance fields exposed', Appearance.fields().length >= 8 && Appearance.fields().every(f => f.n > 0));
+  const rnd = Appearance.random();
+  check('random appearance in range', Appearance.fields().every(f => rnd[f.key] >= 0 && rnd[f.key] < f.n));
+  const set = HeroArt.build(rnd);
+  check('hero has 4 directions x 2 frames', ['down', 'up', 'left', 'right'].every(d => set[d + '0'] && set[d + '1']));
+  check('hero frames are 16x16', set.down0.width === 16 && set.down0.height === 16);
+  Appearance.save(rnd);
+  check('appearance persists', JSON.stringify(Appearance.load()) === JSON.stringify(Object.assign({}, Appearance.DEFAULT, rnd)));
+  EXPGUI.applyAppearance(rnd, false);
+  check('applying appearance rebuilds the hero', !!World.heroSprites.down0 && World.heroSprites.down0.width === 16);
+  EXPGUI._appDraft = Object.assign({}, rnd);
+  EXPGUI.renderAppearance();          // não deve lançar com os stubs de DOM
+  EXPGUI.toggleAppearance(false);
+  check('appearance panel renders', true);
 
   console.log('— biomes & regions —');
   check('biome deterministic', WorldGen.biomeKeyAt(60, 60) === WorldGen.biomeKeyAt(60, 60));
