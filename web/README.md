@@ -31,6 +31,38 @@ python3 scripts/build_web_bundle.py
 Progress is saved automatically to your browser's `localStorage` (autosave every 10 s
 and on tab close). Use 📤/📥 in the top bar to export/import a save code.
 
+## Two ways to play — same hero
+
+The web edition now has **two modes sharing one save** (`idle-fantasy-web-save-v1`):
+
+- **🏠 Hub idle** (`index.html`) — the original port. Start sessions, close the tab,
+  come back to loot. Best for Construction, Mercantile, Agility courses, guilds,
+  town buildings, church, carnival and seasonal events.
+- **🗺️ Expeditions** (`expedition.html`) — **Idle Fantasy reimagined as a real-time
+  top-down 2D action RPG, no idling.** Walk an open world with WASD, chop trees,
+  mine ore nodes, fish, pickpocket townsfolk, farm real-time patches, and fight
+  every one of the 29 dungeons in person — entering their gates scattered across
+  the map. Raid bosses can be challenged from the codex.
+
+Everything is shared between the modes: skills/XP (the app's real `xp_table`),
+inventory, coins, equipment, Slayer tasks, pets, blessings and the 189-quest
+progress tracker — kills, gathers and crafts in Expeditions feed the same stats
+the Hub quests read. Combat uses the same OSRS formulas as `sim.js` (max hit,
+hit chance, 70/15/15 XP split), just resolved in real time instead of in
+pre-simulated sessions.
+
+| Expedition feature | Details |
+| --- | --- |
+| **World** | Procedural open world (value-noise terrain), town hub with shop, church, slayer master, farming plots and thieving NPCs; dungeon gates placed deterministically and gated by the same unlock rules as the Hub (expedition lore notes, magic bean). |
+| **Gathering** | Mining/woodcutting nodes with tool efficiency (pickaxe/axe tiers incl. the +25 %/tier over-level bonus), gem rolls per ore, 1/1000 pets, skill-cape yields, fishing with rod efficiency. |
+| **Combat** | Melee arc / arrows (best tier first, consumed per shot) / spell projectiles with rune costs and infinite-rune staves; enemy telegraphs; auto-eat at 50 % HP; safe zones can't kill you; death keeps XP and respawns in town. |
+| **Dungeons** | Instanced caves with the real enemy rosters, encounter pacing from `encounter_rate`, rare-drop rolls after a completed run (≥8 kills), style/no-food run tracking for quests. |
+| **Journal [B]** | 14 tabs: skills, equipment, forge, fletching, crafting, cooking (+firemaking), herblore, runecrafting (×2/×3 at 50/75), prayers (scatter bones/ashes, church blessings), spellbook, farming, Slayer master (+points shop), general store (buy/sell, 2× XP boost) and the codex. |
+
+Controls: **WASD** move · **Space/J/click** attack/gather · **E** interact ·
+**Q** combat style · **P** eat · **B** journal. Touch controls (joystick + buttons)
+appear automatically on mobile.
+
 ## What's in the port
 
 | System | Details |
@@ -77,7 +109,8 @@ experience.
 
 ```
 web/
-├── index.html          # app shell
+├── index.html          # app shell (idle hub)
+├── expedition.html     # Expeditions mode shell (real-time top-down RPG)
 ├── css/style.css       # dark fantasy theme
 ├── i18n/               # generated locales (scripts/build_web_locales.py)
 ├── js/
@@ -92,7 +125,10 @@ web/
 │   ├── engine.js       # session lifecycle (incl. worker jobs), shop, quests
 │   ├── ui.js           # screen rendering + interactions
 │   ├── ui-town.js      # Town tab (slayer/guilds/church/inn/builder/expeditions/event/carnival/tower), farming/herblore/pets UI
-│   └── main.js         # boot, tick loop, autosave, offline catch-up, language picker
+│   ├── main.js         # boot, tick loop, autosave, offline catch-up, language picker
+│   ├── expedition-core.js  # Expeditions mode: sprites/audio + real-data lists + OSRS combat formulas + quest feed
+│   ├── expedition-world.js # Expeditions mode: world/dungeon gen, entities, real-time gathering & combat
+│   └── expedition-ui.js    # Expeditions mode: canvas renderer, HUD, journal tabs, input, boot
 ├── data/               # copied verbatim from app/src/main/assets/data
 └── test/               # headless Node test suites (npm-less): node test/smoke.js
 ```
