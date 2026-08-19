@@ -284,10 +284,15 @@ const EXPGUI = {
     for (const b of World.BUILDINGS) {
       if (ptx >= b.x - 1 && ptx <= b.x + b.w && pty >= b.y - 1 && pty <= b.y + b.h) {
         const name = EXP.buildingName(b);
-        if (b.key === 'shop') return { label: '🛒 ' + name, sub: tt('web_exp_interact_shop_sub'), action: () => this.openJournalTab('shop') };
-        if (b.key === 'church') return { label: '⛪ ' + name, sub: tt('web_exp_interact_church_sub'), action: () => this.openJournalTab('pray') };
-        if (b.key === 'workshop') return { label: '🏗️ ' + name, sub: tt('web_exp_interact_workshop_sub'), action: () => this.openJournalTab('build') };
-        if (b.key === 'trade') return { label: '🐎 ' + name, sub: tt('web_exp_interact_trade_sub'), action: () => this.openJournalTab('trade') };
+        const icon = b.icon || '🏠';
+        if (b.key === 'shop') return { label: icon + ' ' + name, sub: tt('web_exp_interact_shop_sub'), action: () => this.openJournalTab('shop') };
+        if (b.key === 'church') return { label: icon + ' ' + name, sub: tt('web_exp_interact_church_sub'), action: () => this.openJournalTab('pray') };
+        if (b.key === 'workshop') return { label: icon + ' ' + name, sub: tt('web_exp_interact_workshop_sub'), action: () => this.openJournalTab('build') };
+        if (b.key === 'trade') return { label: icon + ' ' + name, sub: tt('web_exp_interact_trade_sub'), action: () => this.openJournalTab('trade') };
+        if (b.key === 'barracks') return { label: icon + ' ' + name, sub: tt('web_exp_interact_barracks_sub', null, 'Check your equipment and combat style'), action: () => this.openJournalTab('equip') };
+        if (b.key === 'library') return { label: icon + ' ' + name, sub: tt('web_exp_interact_library_sub', null, 'Study spells and runes'), action: () => this.openJournalTab('magic') };
+        if (b.key === 'tavern') return { label: icon + ' ' + name, sub: tt('web_exp_interact_tavern_sub', null, 'A hot meal and rumours from the road'), action: () => this.openJournalTab('cook') };
+        if (b.key === 'castle') return { label: icon + ' ' + name, sub: tt('web_exp_interact_castle_sub', null, 'The crown assigns hunts and honours'), action: () => this.openJournalTab('slayer') };
       }
     }
     // Slayer Master
@@ -628,60 +633,87 @@ const EXPGUI = {
   renderBigMap() {
     const cv = document.getElementById('mapcv');
     const ctx = cv.getContext('2d');
-    const R = 150, S = 3, C = 450;
+    const R = 250, S = 1.8, C = 450;
     const px = t => C + t * S;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, 900, 900);
     ctx.imageSmoothingEnabled = false;
-    // terreno + muralha — sempre do overworld (mesmo se estiver numa dungeon)
-    const savedMode = World.mode;
-    World.mode = 'overworld';
-    for (let ty = -R; ty <= R; ty++) for (let tx = -R; tx <= R; tx++) {
-      let c;
-      if (World.wallAt(tx, ty)) c = '#8d939e';
-      else {
-        const t = World.terrainAt(tx, ty);
-        c = t === TERRAIN.WATER ? '#2f6fb0' : t === TERRAIN.SAND ? '#d8c084' : (t === TERRAIN.GRASS2 ? '#3f7a37' : '#4c8a40');
+    ctx.fillStyle = '#0a1526'; ctx.fillRect(0, 0, 900, 900);
+    // terreno por bioma: desenhado uma única vez e reaproveitado (o mundo é estático)
+    if (!this._mapLayer) {
+      const layer = document.createElement('canvas');
+      layer.width = 900; layer.height = 900;
+      const lc = layer.getContext('2d');
+      const savedMode0 = World.mode;
+      World.mode = 'overworld';
+      const step = 2;
+      for (let ty = -R; ty <= R; ty += step) for (let tx = -R; tx <= R; tx += step) {
+        lc.fillStyle = EXPART.mapColor(tx, ty, false);
+        lc.fillRect(px(tx), px(ty), S * step + 0.6, S * step + 0.6);
       }
-      ctx.fillStyle = c;
-      ctx.fillRect(px(tx), px(ty), S, S);
+      World.mode = savedMode0;
+      this._mapLayer = layer;
+    }
+    ctx.drawImage(this._mapLayer, 0, 0);
+    // nomes das regiões (reinos/domínios)
+    const savedMode = World.mode;
+    ctx.textAlign = 'center';
+    for (const reg of WorldGen.REGIONS) {
+      if (reg.key === 'heartlands') continue;
+      ctx.font = 'bold 11px "Courier New"';
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      const nm = reg.icon + ' ' + WorldGen.localized(reg, 'name').toUpperCase();
+      const w = ctx.measureText(nm).width;
+      const ly = px(reg.y - reg.r * 0.62);   // acima do centro: não cobre a cidade
+      if (WorldGen.SETTLEMENTS.some(st => Math.abs(st.x - reg.x) < 26 && Math.abs(st.y - (reg.y - reg.r * 0.62)) < 7)) continue;
+      ctx.fillRect(px(reg.x) - w / 2 - 4, ly - 10, w + 8, 14);
+      ctx.fillStyle = 'rgba(255,245,220,.85)';
+      ctx.fillText(nm, px(reg.x), ly);
     }
     World.mode = savedMode;
-    // edifícios da cidade
-    ctx.fillStyle = '#c9a05a';
-    for (const b of World.BUILDINGS) ctx.fillRect(px(b.x), px(b.y), b.w * S, b.h * S);
-    // canteiros
-    ctx.fillStyle = '#7a5a2f';
-    for (const sp of World.FARM_SPOTS) ctx.fillRect(px(sp.x), px(sp.y), S, S);
     // circuito de agilidade
     ctx.fillStyle = '#5aa9ff';
     for (const ob of (World.obstacles || [])) ctx.fillRect(px(ob.tx) - 1, px(ob.ty) - 1, S + 2, S + 2);
-    // portais numerados
+    // portais de dungeon numerados
     World.gates.forEach((g, i) => {
       const unlocked = State.dungeonUnlocked(g.key);
       const gx = px(g.tx) + S / 2, gy = px(g.ty) + S / 2;
+      ctx.fillStyle = '#0c0f1a'; ctx.beginPath(); ctx.arc(gx, gy, 6, 0, 7); ctx.fill();
       ctx.fillStyle = unlocked ? '#f6c453' : '#e05252';
-      ctx.beginPath(); ctx.arc(gx, gy, 4, 0, 7); ctx.fill();
-      ctx.fillStyle = '#0c0f1a'; ctx.font = 'bold 6px monospace'; ctx.textAlign = 'center';
-      ctx.fillText(String(i + 1), gx, gy + 2);
+      ctx.beginPath(); ctx.arc(gx, gy, 4.6, 0, 7); ctx.fill();
+      ctx.fillStyle = '#0c0f1a'; ctx.font = 'bold 7px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(String(i + 1), gx, gy + 2.5);
     });
+    // cidades e reinos
+    for (const st of WorldGen.SETTLEMENTS) {
+      const x = px(st.x), y = px(st.y);
+      const big = st.kind === 'capital' || st.kind === 'kingdom';
+      ctx.fillStyle = '#0c0f1a'; ctx.beginPath(); ctx.arc(x, y, big ? 8 : 6, 0, 7); ctx.fill();
+      ctx.fillStyle = st.pal.banner; ctx.beginPath(); ctx.arc(x, y, big ? 6 : 4, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, big ? 2.6 : 1.8, 0, 7); ctx.fill();
+      const nm = WorldGen.localized(st, 'short');
+      ctx.font = (big ? 'bold 12px' : '10px') + ' "Courier New"'; ctx.textAlign = 'center';
+      const w = ctx.measureText(nm).width;
+      ctx.fillStyle = 'rgba(10,13,23,.7)'; ctx.fillRect(x - w / 2 - 3, y + 8, w + 6, 13);
+      ctx.fillStyle = big ? '#ffd97a' : '#e9ecf5'; ctx.fillText(nm, x, y + 18);
+    }
     // jogador (dentro de dungeon: marcador no portal correspondente)
     const p = World.mode === 'dungeon'
       ? (World.gates.find(g => g.key === World.dungeonKey) || { x: 0, y: 0 })
       : World.player;
     const ptx = p.x / TILE, pty = p.y / TILE;
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(px(ptx), px(pty), 7, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px(ptx), px(pty), 8, 0, 7); ctx.stroke();
     ctx.fillStyle = '#ffffff';
     ctx.beginPath(); ctx.arc(px(ptx), px(pty), 3.5, 0, 7); ctx.fill();
-    // rótulos
-    ctx.fillStyle = '#ffd97a'; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText(tt('web_exp_map_city'), C, px(-18));
-    ctx.fillText('N', C, 14);
-    // legenda lateral (com viagem rápida)
+    // rosa dos ventos
+    ctx.fillStyle = '#ffd97a'; ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('N', C, 20); ctx.fillText('S', C, 892);
+    ctx.fillText('O', 12, C); ctx.fillText('L', 888, C);
+
+    // ---------------- legenda ----------------
     const legend = document.getElementById('maplegend');
     legend.innerHTML = '';
-    const rows = this.bigMapLegend();
     const mkRow = (html, cls, onclick) => {
       const d = document.createElement('div');
       d.className = 'map-row' + (cls ? ' ' + cls : '');
@@ -690,30 +722,57 @@ const EXPGUI = {
       legend.appendChild(d);
       return d;
     };
+    const mkHead = txt => {
+      const d = document.createElement('div');
+      d.className = 'section-head';
+      d.textContent = txt;
+      legend.appendChild(d);
+    };
     const inDungeon = World.mode === 'dungeon';
     const travelBtn = () => '<button class="map-travel' + (inDungeon ? ' disabled' : '') + '" title="' + tt('web_exp_map_travel_title') + '">' + tt('web_exp_map_travel') + '</button>';
-    // cidade: linha com viagem rápida de volta
-    mkRow('<span>' + tt('web_exp_map_city_row') + '</span><span class="side"><span>' + tt('web_exp_map_city_side') + '</span>' + travelBtn() + '</span>',
-      '', () => this._mapHint(tt('web_exp_map_city_hint')));
+
+    // cidades e reinos (com viagem rápida)
+    mkHead(tt('web_exp_map_head_cities', null, '🏰 Cities & Kingdoms'));
+    const pl = World.mode === 'dungeon' ? (World.gates.find(g => g.key === World.dungeonKey) || World.player) : World.player;
+    for (const st of WorldGen.SETTLEMENTS) {
+      const dTiles = Math.round(Math.hypot(st.x * TILE - pl.x, st.y * TILE - pl.y) / TILE);
+      const kind = tt('web_exp_map_kind_' + st.kind, null, st.kind);
+      const row = mkRow(
+        '<span><span class="dot" style="background:' + st.pal.banner + '"></span>' + st.icon + ' ' + WorldGen.localized(st, 'short') + '</span>' +
+        '<span class="side"><span>' + kind + '</span><span>' + tt('web_exp_map_tiles', [dTiles]) + '</span>' + travelBtn() + '</span>',
+        '', () => this._mapHint('<b>' + WorldGen.localized(st, 'name') + '</b> — ' +
+          tt('web_exp_map_city_of', [tt('web_exp_map_kind_' + st.kind, null, st.kind),
+            WorldGen.localized(WorldGen.REGIONS.find(r => r.key === st.region) || { name: '', nameEn: '' }, 'name')],
+            '{1} in {2}') + ' · ' + (st.buildings || []).map(b => (b.icon || '') + ' ' + WorldGen.localized(b, 'name')).join(' · ')));
+      const tb = row.querySelector('.map-travel');
+      if (tb && !inDungeon) tb.onclick = e => { e.stopPropagation(); this.fastTravelToSettlement(st.key); };
+    }
+
     mkRow('<span>' + tt('web_exp_map_agility_row') + '</span><span class="side">' + tt('web_exp_map_agility_side') + '</span>', '',
       () => this._mapHint(tt('web_exp_map_agility_hint', [Agility.currentCourse().def.display_name, Agility.currentCourse().def.xp_per_success])));
+
+    // dungeons por tema/bioma
+    mkHead(tt('web_exp_map_head_dungeons', null, '🗡️ Dungeons'));
+    const rows = this.bigMapLegend();
     rows.forEach(r => {
       const dist = r.distTiles < 1000 ? tt('web_exp_map_tiles', [r.distTiles]) : tt('web_exp_map_ktiles', [(r.distTiles / 1000).toFixed(1)]);
+      const gate = World.gates.find(g => g.key === r.key);
+      const theme = gate ? gate.theme : DungeonGen.theme(r.key, GameData.dungeons[r.key]);
+      const biome = gate && BIOMES[gate.biome] ? BIOMES[gate.biome] : null;
       const rowEl = mkRow(
-        '<span><span class="dot" style="background:' + (r.unlocked ? '#f6c453' : '#e05252') + '"></span>' + r.idx + '. ' + r.name + '</span>' +
-        '<span class="side"><span>' + tt('web_exp_map_lv', [r.level]) + '</span><span>' + dist + '</span>' +
-        (r.unlocked ? travelBtn() : '') + '</span>',
+        '<span><span class="dot" style="background:' + (r.unlocked ? '#f6c453' : '#e05252') + '"></span>' + r.idx + '. ' + (theme.icon || '') + ' ' + r.name + '</span>' +
+        '<span class="side"><span>' + tt('web_exp_map_lv', [r.level]) + '</span>' +
+        (biome ? '<span>' + (biome.icon || '') + ' ' + WorldGen.localized(biome, 'name') + '</span>' : '') +
+        '<span>' + dist + '</span>' + (r.unlocked ? travelBtn() : '') + '</span>',
         r.unlocked ? '' : 'lock',
-        () => this._mapHint(r.unlocked
+        () => this._mapHint((r.unlocked
           ? tt('web_exp_map_dungeon_hint', [r.name, r.level, r.desc])
-          : tt('web_exp_map_dungeon_hint_locked', [r.name, r.level, r.desc]))
+          : tt('web_exp_map_dungeon_hint_locked', [r.name, r.level, r.desc])) +
+          (biome ? ' · ' + (biome.icon || '') + ' ' + WorldGen.localized(biome, 'name') : ''))
       );
       const tb = rowEl.querySelector('.map-travel');
       if (tb && !inDungeon) tb.onclick = e => { e.stopPropagation(); this.fastTravelToGate(r.key); };
     });
-    // botão de viagem da primeira linha (cidade)
-    const cityBtn = legend.querySelector('.map-row .map-travel');
-    if (cityBtn && !inDungeon) cityBtn.onclick = e => { e.stopPropagation(); this.fastTravelToCity(); };
     if (World.mode === 'dungeon')
       this._mapHint(tt('web_exp_map_inside', [GameData.dungeons[World.dungeonKey]?.display_name || '']));
   },
@@ -743,7 +802,28 @@ const EXPGUI = {
     this.savePos(); State.save();
   },
 
-  /** Viaja rápido de volta à cidade murada. */
+  /** Viaja rápido para qualquer cidade/reino do mapa. */
+  fastTravelToSettlement(key) {
+    const st = WorldGen.settlement(key);
+    if (!st) return;
+    if (World.mode === 'dungeon') { this.toast(tt('web_exp_map_travel_blocked_dungeon')); SFX.error(); return; }
+    if (this.nearbyEnemies()) { this.toast(tt('web_exp_map_travel_blocked_enemies')); SFX.error(); return; }
+    const p = World.player;
+    let placed = false;
+    for (let d = 0; d < st.r && !placed; d++) {
+      for (const [ox, oy] of [[0, d], [d, 0], [0, -d], [-d, 0], [d, d], [-d, d], [d, -d], [-d, -d]]) {
+        const tx = st.x + ox, ty = st.y + oy;
+        if (!World.solidTile(tx, ty)) { p.x = tx * TILE + TILE / 2; p.y = ty * TILE + TILE / 2; placed = true; break; }
+      }
+    }
+    World.camera.x = p.x; World.camera.y = p.y;
+    this.toggleBigMap();
+    SFX.portal(); this.flash('lvflash');
+    this.toast(tt('web_exp_map_travel_toast', [WorldGen.localized(st, 'name')]));
+    this.savePos(); State.save();
+  },
+
+  /** Viaja rápido de volta à capital. */
   fastTravelToCity() {
     if (World.mode === 'dungeon') { this.toast(tt('web_exp_map_travel_blocked_dungeon')); SFX.error(); return; }
     if (this.nearbyEnemies()) { this.toast(tt('web_exp_map_travel_blocked_enemies')); SFX.error(); return; }
@@ -1314,7 +1394,7 @@ const EXPGUI = {
         if (res) this.drawResource(ctx, res, ox, oy);
         else if (World.regrowing.has(key)) {
           const ra = World.resourceAt(tx, ty);
-          if (ra && ra.kind === 'tree') this.drawSprite(ctx, this.treeSprite(EXP.TREE_COLORS[EXP.TREES[ra.id].key], true), tx * TILE + TILE / 2, ty * TILE + TILE / 2, ox, oy, 0.7);
+          if (ra && ra.kind === 'tree') this.drawSprite(ctx, this.treeSprite(EXP.TREE_COLORS[EXP.TREES[ra.id].key], true, ra.style), tx * TILE + TILE / 2, ty * TILE + TILE / 2, ox, oy, 0.7);
         }
       }
       this.drawTown(ctx, ox, oy);
@@ -1322,6 +1402,8 @@ const EXPGUI = {
       this.drawObstacles(ctx, ox, oy);
       for (const npc of World.npcs) this.drawEnemy(ctx, npc, ox, oy, '#8fd8ff');
     } else {
+      // adereços do tema (colunas, tochas, teias, lava, tendas…)
+      EXPART.drawProps(ctx, ox, oy, this.screenW, this.screenH);
       // saída da dungeon
       this.drawSprite(ctx, this.portalSpr, TILE / 2 + 6, TILE / 2 + 6, ox, oy, 1);
       const t = tt('web_exp_interact_dungeon_exit', ['']).replace(/\s*—\s*$/, '');
@@ -1331,6 +1413,7 @@ const EXPGUI = {
     for (const e of World.enemies) this.drawEnemy(ctx, e, ox, oy);
     for (const e of World.bosses) this.drawEnemy(ctx, e, ox, oy, '#f6c453');
     this.drawPlayer(ctx, ox, oy);
+    this.drawAmbient(ctx, ox, oy);
     for (const pr of World.projectiles) {
       ctx.fillStyle = pr.color;
       ctx.beginPath(); ctx.arc(pr.x - ox, pr.y - oy, 4, 0, 7); ctx.fill();
@@ -1348,95 +1431,67 @@ const EXPGUI = {
       ctx.fillStyle = f.color; ctx.fillText(f.text, f.x - ox, f.y - oy);
     }
     ctx.globalAlpha = 1;
+    if (World.mode === 'dungeon') EXPART.drawDungeonFog(ctx, this.screenW, this.screenH);
+    this.drawBiomeBanner(ctx);
     this.drawMinimap(ctx);
   },
 
-  drawTile(ctx, tx, ty, ox, oy) {
-    const x = tx * TILE - ox, y = ty * TILE - oy;
-    if (x < -TILE || y < -TILE || x > this.screenW + TILE || y > this.screenH + TILE) return;
-    const t = World.terrainAt(tx, ty);
-    const v = hash2(tx, ty);
-    if (World.mode === 'dungeon') {
-      if (t === TERRAIN.WATER) { // parede rochosa
-        ctx.fillStyle = v < 0.5 ? '#2a2f3d' : '#232733'; ctx.fillRect(x, y, TILE, TILE);
-        if (v < 0.22) { ctx.fillStyle = '#39404f'; ctx.fillRect(x + 6 + v * 10, y + 8, 8, 5); }
-        ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x, y + TILE - 4, TILE, 4);
-      } else if (t === TERRAIN.SAND) {
-        ctx.fillStyle = v < 0.5 ? '#6a5a3f' : '#5f5138'; ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = 'rgba(246,196,83,.15)'; ctx.fillRect(x, y, TILE, TILE);
+  /** Partículas de clima (neve, brasas, esporos, areia, vaga-lumes…). */
+  drawAmbient(ctx, ox, oy) {
+    for (const a of World.ambient) {
+      const x = a.x - ox, y = a.y - oy;
+      if (x < -20 || y < -20 || x > this.screenW + 20 || y > this.screenH + 20) continue;
+      ctx.globalAlpha = XU.clamp(a.life / (a.maxLife * 0.5), 0, 1) * (a.kind === 'firefly' ? 0.5 + 0.5 * Math.sin(World.time * 4 + a.seed) : 0.85);
+      ctx.fillStyle = a.color;
+      if (a.kind === 'cloud' || a.kind === 'shade') {
+        ctx.beginPath(); ctx.ellipse(x, y, a.size * 3, a.size * 1.4, 0, 0, 7); ctx.fill();
+      } else if (a.kind === 'bubble') {
+        ctx.beginPath(); ctx.arc(x, y, a.size, 0, 7); ctx.stroke ? (ctx.strokeStyle = a.color, ctx.stroke()) : ctx.fill();
+      } else if (a.kind === 'sunray') {
+        ctx.fillRect(x, y, 2, a.size * 6);
       } else {
-        ctx.fillStyle = v < 0.12 ? '#40465a' : (v > 0.88 ? '#4a5168' : '#454b5e');
-        ctx.fillRect(x, y, TILE, TILE);
-        if (v > 0.93) { ctx.fillStyle = '#3a4052'; ctx.fillRect(x + 8 + v * 8, y + 10, 6, 4); }
+        ctx.fillRect(x, y, a.size, a.size);
       }
-      return;
     }
-    if (t === TERRAIN.WATER) {
-      ctx.fillStyle = (Math.sin(World.time * 1.6 + tx * 0.6 + ty * 0.4) > 0) ? '#3a86c8' : '#3378b5';
-      ctx.fillRect(x, y, TILE, TILE);
-      if (hash2(tx, ty) < 0.2) { ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(x + hash2(tx, ty + 9) * 20 + 4, y + hash2(tx + 4, ty) * 20 + 4, 6, 2); }
+    ctx.globalAlpha = 1;
+  },
+
+  /** Faixa discreta com o bioma/região atual — orienta o jogador no mapa. */
+  drawBiomeBanner(ctx) {
+    const p = World.player; if (!p) return;
+    const tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
+    let title, sub;
+    if (World.mode === 'dungeon') {
+      const d = GameData.dungeons[World.dungeonKey];
+      const th = World.dungeonTheme();
+      title = (th?.icon || '🗡️') + ' ' + (d?.display_name || '');
+      sub = tt('web_exp_theme_' + (th?.pal || 'cave'), null, th?.pal || '');
     } else {
-      // muralha medieval ao redor da cidade
-      if (World.wallAt(tx, ty)) {
-        const tower = World.gateTowerAt(tx, ty);
-        ctx.fillStyle = tower ? '#7a7f8c' : (v < 0.5 ? '#6a7078' : '#5f656d');
-        ctx.fillRect(x, y, TILE, TILE);
-        // tijolos
-        ctx.fillStyle = 'rgba(0,0,0,.22)';
-        for (let by = 4; by < TILE; by += 8) ctx.fillRect(x, y + by, TILE, 1);
-        for (let bx = ((tx + ty) % 2) * 8; bx < TILE; bx += 16) ctx.fillRect(x + bx + 4, y + ((bx / 16 | 0) % 2) * 8, 1, 8);
-        // ameias no topo (lado de dentro da cidade)
-        const inside = Math.hypot(tx, ty) < World.townR + 1.1;
-        if (inside) {
-          ctx.fillStyle = tower ? '#8f95a3' : '#7a8088';
-          ctx.fillRect(x, y, TILE, 6);
-          ctx.fillStyle = '#5f656d';
-          ctx.fillRect(x + 4, y, 6, 10); ctx.fillRect(x + 20, y, 6, 10);
-        }
-        if (tower) { // ameias de torre nos dois lados do portão
-          ctx.fillStyle = '#8f95a3';
-          ctx.fillRect(x + 2, y + 2, 6, 6); ctx.fillRect(x + TILE - 8, y + TILE - 8, 6, 6);
-        }
-        return;
-      }
-      // estrada de terra saindo do portão sul
-      if (Math.abs(tx) <= 1 && ty >= World.townR - 1 && ty <= World.townR + 3) {
-        ctx.fillStyle = v < 0.5 ? '#a58a5f' : '#9c8158';
-        ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = 'rgba(0,0,0,.15)';
-        if (hash2(tx, ty) < 0.4) ctx.fillRect(x + 6 + hash2(tx, ty + 5) * 16, y + 8 + hash2(tx + 2, ty) * 14, 3, 2);
-        return;
-      }
-      const inTown = World.inTown(tx, ty);
-      let base = t === TERRAIN.SAND ? '#e5cd97' : t === TERRAIN.GRASS2 ? '#4f9545' : '#5aa04c';
-      if (inTown) base = '#63a052';
-      ctx.fillStyle = v < 0.12 ? shadeColor2(base, -8) : (v > 0.88 ? shadeColor2(base, 8) : base);
-      ctx.fillRect(x, y, TILE, TILE);
-      // praça de pedra no centro
-      if (inTown && Math.abs(tx) + Math.abs(ty) < 9) {
-        ctx.fillStyle = (tx + ty) % 2 === 0 ? 'rgba(165,155,140,.5)' : 'rgba(150,140,128,.42)';
-        ctx.fillRect(x + 1, y + 1, TILE - 2, TILE - 2);
-        if (v > 0.85) { ctx.fillStyle = 'rgba(120,110,100,.5)'; ctx.fillRect(x + 12, y + 14, 6, 4); }
-      }
-      // canteiros de flores decorativos
-      if (inTown && Math.abs(tx) + Math.abs(ty) >= 9 && v > 0.72) {
-        ctx.fillStyle = ['#d46a9a', '#d4b13a', '#7a9ad4'][Math.floor(hash2(tx + 9, ty) * 3)];
-        ctx.fillRect(x + 8 + hash2(tx, ty + 3) * 12, y + 8 + hash2(tx + 5, ty) * 12, 3, 3);
-      }
-      if (t === TERRAIN.SAND) {
-        if (v < 0.3) { ctx.fillStyle = 'rgba(150,120,70,0.5)'; ctx.fillRect(x + 8 + hash2(tx, ty) * 16, y + 10 + hash2(tx + 3, ty) * 16, 2, 2); }
-      } else if (!inTown) {
-        const d = hash2(tx * 3 + 1, ty * 5 + 2);
-        if (d < 0.25) {
-          ctx.fillStyle = 'rgba(20,40,15,0.35)';
-          const gx = x + hash2(tx, ty) * 24 + 4, gy = y + hash2(tx + 7, ty) * 24 + 4;
-          ctx.fillRect(gx, gy, 1, 4); ctx.fillRect(gx - 2, gy + 2, 1, 3); ctx.fillRect(gx + 2, gy + 2, 1, 3);
-        } else if (d > 0.92) {
-          ctx.fillStyle = ['#e8e0d0', '#f2d5a0', '#d3a7d3'][Math.floor(hash2(tx, ty + 3) * 3)];
-          ctx.fillRect(x + hash2(tx + 1, ty) * 22 + 5, y + hash2(tx + 5, ty) * 22 + 5, 2, 2);
-        }
-      }
+      const st = World.settlementAt(tx, ty, 2);
+      const b = World.biomeAt(tx, ty);
+      const reg = World.regionAt(tx, ty);
+      title = st ? st.icon + ' ' + WorldGen.localized(st, 'name') : (b.icon || '') + ' ' + WorldGen.localized(b, 'name');
+      sub = reg ? WorldGen.localized(reg, 'name') : '';
     }
+    if (this._bannerTxt !== title) { this._bannerTxt = title; this._bannerT = World.time; }
+    const age = World.time - (this._bannerT || 0);
+    if (age > 4.5) return;
+    const alpha = XU.clamp(Math.min(age * 3, (4.5 - age) * 2), 0, 1);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px "Courier New"';
+    const w = Math.max(ctx.measureText(title).width, sub ? ctx.measureText(sub).width : 0) + 40;
+    const cx = this.screenW / 2, cy = this.screenH - 92;
+    ctx.fillStyle = 'rgba(10,13,23,.55)'; ctx.fillRect(cx - w / 2, cy - 26, w, sub ? 46 : 32);
+    ctx.strokeStyle = 'rgba(246,196,83,.35)'; ctx.strokeRect(cx - w / 2 + 0.5, cy - 25.5, w - 1, (sub ? 46 : 32) - 1);
+    ctx.fillStyle = '#ffd97a'; ctx.fillText(title, cx, cy - 4);
+    if (sub) { ctx.font = '11px "Courier New"'; ctx.fillStyle = '#9aa4bd'; ctx.fillText(sub.toUpperCase(), cx, cy + 13); }
+    ctx.restore();
+  },
+
+  drawTile(ctx, tx, ty, ox, oy) {
+    EXPART.drawTile(ctx, tx, ty, ox, oy, this.screenW, this.screenH);
   },
 
   drawSprite(ctx, spr, wx, wy, ox, oy, alpha) {
@@ -1446,11 +1501,22 @@ const EXPGUI = {
   },
 
   treeCache: {}, rockCache: {},
-  treeSprite(color, stump) {
-    const key = color + (stump ? 's' : '');
+  TREE_ROWS: {
+    oak: [".....ggggg......", "...ggGGGGGGg....", "..gGGGGGGGGGGg..", ".gGGGGGGGGGGGGg.", ".GGGDDGGGGGDGGG.", "gGGDDDGGGGDDDGGg", "gGGGGGGGGGGGGGGg", "gGGGGGGGGGGGGGGg", "..gGGGGGGGGGGg..", "...gGGGGGGGGg...", ".....gggggg.....", "......TTTT......", "......TTTT......", ".....TTTTTT.....", ".....TTTTTT.....", "....tttttttt...."],
+    pine: [".......GG.......", "......GGGG......", "......gDDg......", ".....GGGGGG.....", "....gGGDDGGg....", "....GGGGGGGG....", "...gGGGDDGGGg...", "..GGGGGGGGGGGG..", "..gGGGGDDGGGGg..", ".GGGGGGGGGGGGGG.", ".gGGGGGGGGGGGGg.", "......TTTT......", "......TTTT......", "......TTTT......", ".....TTTTTT.....", "....tttttttt...."],
+    palm: ["...gg......gg...", "..gGGg....gGGg..", ".gGGGGg..gGGGGg.", "gGGGGGGDDGGGGGGg", ".gGGGGgDDgGGGGg.", "...gg..DD..gg...", "......TDDT......", "......TTTT......", ".....TTTTt......", ".....TTTT.......", "....tTTTT.......", "....TTTTt.......", "....TTTT........", "...tTTTT........", "...TTTTt........", "..tttttt........"],
+    dead: ["................", "..g...........g.", "...g...TT....g..", "....gg.TT..gg...", "......TTTT......", ".....TTTTTg.....", "....gTTTT.......", "......TTTT......", "....TTTTTT......", "......TTTT......", "......TTTT......", ".....TTTTTT.....", ".....TTTTTT.....", "....TTTTTTTT....", "....tttttttt....", "...tttttttttt..."],
+    acacia: ["................", "..gggggggggggg..", ".gGGGGGGGGGGGGg.", "gGGGDDGGGGDDGGGg", ".gGGGGGGGGGGGGg.", "..gggggggggggg..", ".......TT.......", "......TTTT......", "......TTTT......", ".....TTTTTT.....", ".....TTTTTT.....", "....TTTTTTTT....", "....TTTTTTTT....", "...TTTTTTTTTT...", "...tttttttttt...", "..tttttttttttt.."],
+  },
+  treeSprite(color, stump, style) {
+    style = style || 'oak';
+    const key = color + (stump ? 's' : '') + style;
     if (this.treeCache[key]) return this.treeCache[key];
-    const rows = stump ? ["....tttttttt....", "....ttTTTTtt....", "....ttTTTTtt....", ".....tttttt....."] : [".....ggggg......", "...ggGGGGGGg....", "..gGGGGGGGGGGg..", ".gGGGGGGGGGGGGg.", ".GGGDDGGGGGDGGG.", "gGGDDDGGGGDDDGGg", "gGGGGGGGGGGGGGGg", "gGGGGGGGGGGGGGGg", "..gGGGGGGGGGGg..", "...gGGGGGGGGg...", ".....gggggg.....", "......TTTT......", "......TTTT......", ".....TTTTTT.....", ".....TTTTTT.....", "....tttttttt...."];
-    const pal = { G: color, g: shadeColor2(color, -18), D: shadeColor2(color, 22), T: '#7a4f2a', t: '#5b3a1e' };
+    const rows = stump
+      ? ["....tttttttt....", "....ttTTTTtt....", "....ttTTTTtt....", ".....tttttt....."]
+      : (this.TREE_ROWS[style] || this.TREE_ROWS.oak);
+    const trunk = style === 'dead' ? '#5a4736' : style === 'palm' ? '#8a6a3e' : '#7a4f2a';
+    const pal = { G: color, g: shadeColor2(color, -18), D: shadeColor2(color, 22), T: trunk, t: shadeColor2(trunk, -22) };
     this.treeCache[key] = makeSprite(rows, pal);
     return this.treeCache[key];
   },
@@ -1464,7 +1530,7 @@ const EXPGUI = {
 
   drawResource(ctx, res, ox, oy) {
     let spr;
-    if (res.kind === 'tree') spr = this.treeSprite(EXP.TREE_COLORS[EXP.TREES[res.id].key]);
+    if (res.kind === 'tree') spr = this.treeSprite(EXP.TREE_COLORS[EXP.TREES[res.id].key], false, res.style);
     else if (res.id === 'essence') spr = this.rockSprite('#b39ddb');
     else spr = this.rockSprite(EXP.ORE_COLORS[EXP.ORES[res.id].key] || '#8b97a3');
     this.drawSprite(ctx, spr, res.x, res.y, ox, oy, 1);
@@ -1481,22 +1547,8 @@ const EXPGUI = {
   },
 
   drawTown(ctx, ox, oy) {
-    const put = (spr, tx, ty, wTiles, hTiles, label) => {
-      const x = tx * TILE - ox, y = ty * TILE - oy;
-      if (x > this.screenW + 200 || y > this.screenH + 200 || x < -300 || y < -300) return;
-      const w = wTiles * TILE, h = hTiles * TILE;
-      ctx.save();
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(spr, 0, 0, spr.width, spr.height, x, y, w, h - TILE * 0.6);
-      ctx.restore();
-      ctx.font = 'bold 13px "Courier New"'; ctx.textAlign = 'center';
-      ctx.fillStyle = '#ffd97a';
-      ctx.fillText(label, x + w / 2, y - 8);
-    };
-    put(this.shopSpr, World.BUILDINGS[0].x, World.BUILDINGS[0].y, 4, 3, tt('web_exp_town_label_shop'));
-    put(this.churchSpr, World.BUILDINGS[1].x, World.BUILDINGS[1].y, 4, 3, tt('web_exp_town_label_church'));
-    put(this.workshopSpr, World.BUILDINGS[2].x, World.BUILDINGS[2].y, 3, 3, tt('web_exp_town_label_workshop'));
-    put(this.tradeSpr, World.BUILDINGS[3].x, World.BUILDINGS[3].y, 3, 3, tt('web_exp_town_label_trade'));
+    // cidades, reinos e vilas (prédios procedurais + rótulos)
+    EXPART.drawSettlements(ctx, ox, oy, this.screenW, this.screenH);
 
     // poço central
     const wx = World.WELL.x * TILE - ox, wy = World.WELL.y * TILE - oy;
@@ -1692,25 +1744,23 @@ const EXPGUI = {
   },
 
   drawMinimap(ctx) {
-    const size = 128, half = size / 2, mx = this.screenW - size - 14, my = 14;
+    const size = 132, half = size / 2, mx = this.screenW - size - 14, my = 14;
     ctx.save();
-    ctx.globalAlpha = 0.9;
+    ctx.globalAlpha = 0.92;
     ctx.fillStyle = 'rgba(10,13,23,0.78)';
     ctx.fillRect(mx - 4, my - 4, size + 8, size + 8);
+    ctx.strokeStyle = 'rgba(246,196,83,.35)'; ctx.strokeRect(mx - 3.5, my - 3.5, size + 7, size + 7);
     const scl = 3.2, r = Math.floor(half / scl);
     const pcx = Math.floor(World.player.x / TILE), pcy = Math.floor(World.player.y / TILE);
     const dungeon = World.mode === 'dungeon';
     for (let ty = pcy - r; ty <= pcy + r; ty++) for (let tx = pcx - r; tx <= pcx + r; tx++) {
-      const t = World.terrainAt(tx, ty);
       const px = mx + half + (tx - pcx) * scl, py = my + half + (ty - pcy) * scl;
-      ctx.fillStyle = dungeon
-        ? (t === TERRAIN.WATER ? '#1c202b' : t === TERRAIN.SAND ? '#8a7345' : '#454b5e')
-        : (World.wallAt(tx, ty) ? '#8d939e' : t === TERRAIN.WATER ? '#2f6fb0' : t === TERRAIN.SAND ? '#d8c084' : t === TERRAIN.GRASS2 ? '#3f7a37' : '#4c8a40');
+      ctx.fillStyle = EXPART.mapColor(tx, ty, dungeon);
       ctx.fillRect(px, py, scl, scl);
       if (!dungeon) {
         const key = tx + ',' + ty;
-        if (World.resources.has(key)) { ctx.fillStyle = '#c9a05a'; ctx.fillRect(px + scl * 0.2, py + scl * 0.2, scl * 0.6, scl * 0.6); }
-        if (World.buildingAt(tx, ty)) { ctx.fillStyle = '#c9a05a'; ctx.fillRect(px, py, scl, scl); }
+        if (World.resources.has(key)) { ctx.fillStyle = World.resources.get(key).kind === 'tree' ? '#2f6a2f' : '#c9a05a'; ctx.fillRect(px + scl * 0.2, py + scl * 0.2, scl * 0.6, scl * 0.6); }
+        if (World.buildingAt(tx, ty)) { ctx.fillStyle = '#e0c48a'; ctx.fillRect(px, py, scl, scl); }
       }
     }
     ctx.fillStyle = '#e05252';
@@ -1719,14 +1769,26 @@ const EXPGUI = {
       if (ex > mx - 2 && ex < mx + size + 2 && ey > my - 2 && ey < my + size + 2) ctx.fillRect(ex - 1.5, ey - 1.5, 3, 3);
     }
     if (!dungeon) {
-      ctx.fillStyle = '#f6c453';
       for (const g of World.gates) {
         const gx = mx + half + (g.x / TILE - pcx) * scl, gy = my + half + (g.y / TILE - pcy) * scl;
-        if (gx > mx - 2 && gx < mx + size + 2 && gy > my - 2 && gy < my + size + 2) ctx.fillRect(gx - 1.5, gy - 1.5, 3.5, 3.5);
+        if (gx > mx - 2 && gx < mx + size + 2 && gy > my - 2 && gy < my + size + 2) {
+          ctx.fillStyle = State.dungeonUnlocked(g.key) ? '#f6c453' : '#e05252';
+          ctx.fillRect(gx - 2, gy - 2, 4, 4);
+        }
+      }
+      for (const st of WorldGen.SETTLEMENTS) {
+        const sx = mx + half + (st.x - pcx) * scl, sy = my + half + (st.y - pcy) * scl;
+        if (sx > mx - 2 && sx < mx + size + 2 && sy > my - 2 && sy < my + size + 2) {
+          ctx.fillStyle = '#ffffff'; ctx.fillRect(sx - 2.5, sy - 2.5, 5, 5);
+          ctx.fillStyle = st.pal.banner; ctx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+        }
       }
     }
     ctx.fillStyle = '#fff';
     ctx.fillRect(mx + half - 2.5, my + half - 2.5, 5, 5);
+    // rosa dos ventos
+    ctx.fillStyle = 'rgba(246,196,83,.8)'; ctx.font = 'bold 9px "Courier New"'; ctx.textAlign = 'center';
+    ctx.fillText('N', mx + half, my + 9);
     ctx.globalAlpha = 1;
     ctx.restore();
   },

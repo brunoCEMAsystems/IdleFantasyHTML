@@ -190,11 +190,11 @@ const EXP = {
   },
   buildingName(b) {
     switch (b.key) {
-      case 'shop': return tt('web_exp_building_shop', null, b.nameEn || 'General Store');
-      case 'church': return tt('web_exp_building_church', null, b.nameEn || 'Church');
-      case 'workshop': return tt('web_exp_building_workshop', null, b.nameEn || 'Workshop (Hub)');
-      case 'trade': return tt('web_exp_building_trade', null, b.nameEn || 'Trade Post');
-      default: return b.nameEn || b.name || b.key;
+      case 'shop': return b.settlement && b.settlement !== 'aurelia' ? WorldGen.localized(b, 'name') : tt('web_exp_building_shop', null, b.nameEn || 'General Store');
+      case 'church': return b.settlement && b.settlement !== 'aurelia' ? WorldGen.localized(b, 'name') : tt('web_exp_building_church', null, b.nameEn || 'Church');
+      case 'workshop': return b.settlement && b.settlement !== 'aurelia' ? WorldGen.localized(b, 'name') : tt('web_exp_building_workshop', null, b.nameEn || 'Workshop (Hub)');
+      case 'trade': return b.settlement && b.settlement !== 'aurelia' ? WorldGen.localized(b, 'name') : tt('web_exp_building_trade', null, b.nameEn || 'Trade Post');
+      default: return (typeof WorldGen !== 'undefined' ? WorldGen.localized(b, 'name') : (b.nameEn || b.name)) || b.key;
     }
   },
   slotName(slot) {

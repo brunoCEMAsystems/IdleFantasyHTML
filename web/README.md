@@ -56,13 +56,16 @@ pre-simulated sessions.
 
 | Expedition feature | Details |
 | --- | --- |
-| **World** | Procedural open world (value-noise terrain) and a **walled medieval town** (stone ring, south gate with towers and banners, cobblestone plaza, central well, glowing lamp posts) hosting the shop, church, construction workshop, trade post, slayer master, farming plots and thieving NPCs. Dungeon gates are placed deterministically and gated by the same unlock rules as the Hub (expedition lore notes, magic bean). |
+| **World** | A hand-anchored continent with **25 biomes** grouped into **12 named regions/kingdoms** — the Frost Crown to the north, the Sunscar Desert east, the Emberwaste volcano west, the Mirefen swamp south, the Emerald Verdance jungle, the Kaburu savanna, the Blightlands, the Arcane Wastes, the Ironspine mountains, the Greatwood and the Saltmarrow Lakes — ringed by ocean and beaches. Each biome has its own palette, decorations, weather particles (snow, embers, spores, sandstorms, fireflies…) and its own trees/ores. |
+| **Cities & kingdoms** | **12 settlements**: the walled capital **Aurelia** (royal keep, cathedral, arcanum spire, barracks, inn, market stalls, statue, gardens, residential quarters, four gates with towers and banners), the ice throne **Gelaheim**, the dune sultanate **Zafira**, plus Yathran, Mirefoot, Emberwatch, Ironpeak, Port Saltmarrow, Highspire, Kaburu, Oakhollow and the Grey Vigil — each with its own architecture (domes, stilt huts, treetop lodges, obsidian forts), palette and services. **Roads** link every city to the capital, bridging rivers and cutting mountain passes, and dirt **trails** run from the road network to every dungeon gate. |
+| **Dungeon gates** | Each dungeon is placed in the biome that matches its theme (volcano, glacier, jungle, swamp, crystal fields…) and gated by the same unlock rules as the Hub (expedition lore notes, magic bean). |
 | **All 23 skills** | Mining/woodcutting/fishing nodes, thieving, real-time farming, **agility obstacle circuit around the town wall** (success chance like the app's courses), **construction crafting** at the workshop, and **mercantile caravans** at the trade post (90 s real-time trips paying a full session's worth of XP/coins). |
 | **Gathering** | Mining/woodcutting nodes with tool efficiency (pickaxe/axe tiers incl. the +25 %/tier over-level bonus), gem rolls per ore, 1/1000 pets, skill-cape yields, fishing with rod efficiency. |
 | **Combat** | Melee arc / arrows (best tier first, consumed per shot) / spell projectiles with rune costs and infinite-rune staves; enemy telegraphs; auto-eat at 50 % HP; safe zones can't kill you; death keeps XP and respawns in town. |
-| **Dungeons** | Instanced caves with the real enemy rosters, encounter pacing from `encounter_rate`, rare-drop rolls after a completed run (≥8 kills), style/no-food run tracking for quests. |
+| **Dungeons** | **Themed instances, not just caves**: 6 layout generators (organic caves, room-and-corridor crypts, great halls, mine tunnels, open fields and floating islands) × 25 palettes, with matching hazards (lava, water, poison, ice, webs, the void), themed props (coffins, anvils, tents, haystacks, webs, gold hoards, rifts, icicles, pillars, braziers…) and weather (embers in the Volcanic Depths, snow in the Frozen Citadel, fireflies in the Hollowfen, stars in the Void Rift). Real enemy rosters, encounter pacing from `encounter_rate`, rare-drop rolls after a completed run (≥8 kills), style/no-food run tracking for quests. |
 | **Journal [B]** | 16 tabs: skills, equipment, forge, fletching, crafting, cooking (+firemaking), herblore, runecrafting (×2/×3 at 50/75), construction, trade post, prayers (scatter bones/ashes, church blessings), spellbook, farming, Slayer master (+points shop), general store (buy/sell, 2× XP boost) and the codex. |
-| **Fast travel** | The big map `[M]` legend gets a **⚡ Travel** button on every unlocked dungeon gate and on the walled city — you teleport to a safe tile near the destination. Travel is blocked while inside a dungeon or with enemies nearby (no teleporting out of a fight). |
+| **World map [M]** | Full-colour biome map with region names, city markers, numbered dungeon gates and a compass; the legend is split into **Cities & Kingdoms** and **Dungeons** (with each dungeon's theme icon and biome). |
+| **Fast travel** | The big map `[M]` legend gets a **⚡ Travel** button on every unlocked dungeon gate and on every city — you teleport to a safe tile near the destination. Travel is blocked while inside a dungeon or with enemies nearby (no teleporting out of a fight). |
 | **Hub session queue** | The Queue Master queue is visible in Expeditions too: a `📋 Fila` HUD chip opens a panel with the running session (collect it right there when done) and the queued items (removable with ✕). With items queued, finished sessions auto-collect and the next one starts, exactly like in the Hub. |
 
 Controls: **WASD** move · **Space/J/click** attack/gather · **E** interact ·
@@ -134,8 +137,10 @@ web/
 │   ├── ui-town.js      # Town tab (slayer/guilds/church/inn/builder/expeditions/event/carnival/tower), farming/herblore/pets UI
 │   ├── main.js         # boot, tick loop, autosave, offline catch-up, language picker
 │   ├── expedition-core.js  # Expeditions mode: sprites/audio + real-data lists + OSRS combat formulas + quest feed
-│   ├── expedition-world.js # Expeditions mode: world/dungeon gen, entities, real-time gathering & combat
-│   └── expedition-ui.js    # Expeditions mode: canvas renderer, HUD, journal tabs, input, boot
+│   ├── expedition-worldgen.js # Expeditions mode: biomes, regions/kingdoms, cities, roads, dungeon themes & layouts
+│   ├── expedition-world.js # Expeditions mode: collision/resources, entities, real-time gathering & combat, weather
+│   ├── expedition-art.js   # Expeditions mode: biome/dungeon tile painting, city buildings, props, map colours
+│   └── expedition-ui.js    # Expeditions mode: canvas renderer, HUD, journal tabs, world map, input, boot
 ├── data/               # copied verbatim from app/src/main/assets/data
 └── test/               # headless Node test suites (npm-less): node test/smoke.js
 ```

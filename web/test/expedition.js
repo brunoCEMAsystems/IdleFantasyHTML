@@ -42,7 +42,7 @@ const canvasStub = () => ({
 });
 const mapCtxStub = new Proxy({}, { get: (t, k) => (k === 'measureText' ? () => ({ width: 10 }) : () => {}), set: () => true });
 global.document = {
-  getElementById: () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => true }, appendChild() {}, remove() {}, innerHTML: '', textContent: '', addEventListener() {}, dataset: {}, getContext: () => mapCtxStub, width: 0, height: 0, onclick: null }),
+  getElementById: () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => true }, appendChild() {}, remove() {}, innerHTML: '', textContent: '', addEventListener() {}, dataset: {}, getContext: () => mapCtxStub, width: 0, height: 0, onclick: null, children: [], querySelector: () => null, querySelectorAll: () => [] }),
   querySelector: () => null,
   querySelectorAll: () => [],
   createElement: tag => (tag === 'canvas' ? canvasStub() : {
@@ -52,6 +52,7 @@ global.document = {
   }),
   addEventListener() {},
   hidden: false,
+  documentElement: { lang: 'en', style: {} },
 };
 global.window = global;
 global.requestAnimationFrame = () => 0;
@@ -78,10 +79,13 @@ const load = f => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..',
   global.State = StateMod.State;
   global.Systems = require('../js/systems.js').Systems;
   global.Engine = require('../js/engine.js').Engine;
+  global.I18n = require('../js/i18n.js').I18n;
 
   console.log('— expedition scripts —');
   load('expedition-core.js');
+  load('expedition-worldgen.js');
   load('expedition-world.js');
+  load('expedition-art.js');
   load('expedition-ui.js');   // boot() roda async com os stubs de DOM
   // UI boot is async — let it finish
   await new Promise(r => setTimeout(r, 50));
@@ -167,12 +171,92 @@ const load = f => vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..',
   check('pickpocket eventually pays', State.state.coins !== coinsBefore || State.xp('thieving') > 0);
 
   console.log('— town wall & medieval layout —');
-  check('wall ring solid', World.wallAt(10, 10) === true);
+  const ringTile = (() => {
+    for (let a = 0.2; a < 6.3; a += 0.05) {
+      const tx = Math.round(Math.cos(a) * (World.townR + 1.1)), ty = Math.round(Math.sin(a) * (World.townR + 1.1));
+      if (World.wallAt(tx, ty)) return [tx, ty];
+    }
+    return null;
+  })();
+  check('wall ring solid', !!ringTile);
   check('south gate open', World.wallAt(0, World.townR + 1) === false && World.wallAt(1, World.townR + 1) === false);
-  check('wall blocks movement', World.solidTile(10, 10) === true);
+  check('wall blocks movement', !!ringTile && World.solidTile(ringTile[0], ringTile[1]) === true);
   check('gate walkable', World.solidTile(0, World.townR + 1) === false);
-  check('no resources inside walls', World.resourceAt(10, 9) === null);
+  check('no resources inside walls', World.resourceAt(World.townR - 4, World.townR - 5) === null);
   check('trade post exists', !!World.BUILDINGS.find(b => b.key === 'trade'));
+
+  console.log('— biomes & regions —');
+  check('biome deterministic', WorldGen.biomeKeyAt(60, 60) === WorldGen.biomeKeyAt(60, 60));
+  const biomeKeys = new Set();
+  for (let ty = -200; ty <= 200; ty += 7) for (let tx = -200; tx <= 200; tx += 7) biomeKeys.add(WorldGen.biomeKeyAt(tx, ty));
+  check('at least 12 biomes on the map (' + biomeKeys.size + ')', biomeKeys.size >= 12);
+  for (const need of ['desert', 'tundra', 'jungle', 'swamp', 'ocean']) check('biome present: ' + need, biomeKeys.has(need));
+  check('volcanic region exists', ['volcano', 'lavafield', 'scorched', 'ashlands'].some(k => biomeKeys.has(k)));
+  check('every biome has a map colour', [...biomeKeys].every(k => /^#/.test(BIOMES[k].map)));
+  check('regions named', WorldGen.REGIONS.length >= 10 && WorldGen.REGIONS.every(r => r.name && r.nameEn));
+  check('ocean surrounds the continent', WorldGen.biomeKeyAt(400, 0) === 'ocean');
+  check('deep water is solid', SOLID_TERRAIN.has(TERRAIN.WATER) && SOLID_TERRAIN.has(TERRAIN.ROCK));
+
+  console.log('— cities & kingdoms —');
+  check('multiple settlements (' + WorldGen.SETTLEMENTS.length + ')', WorldGen.SETTLEMENTS.length >= 8);
+  check('capital is first & walled', WorldGen.SETTLEMENTS[0].kind === 'capital' && WorldGen.SETTLEMENTS[0].wall === true);
+  check('kingdoms besides the capital', WorldGen.SETTLEMENTS.filter(s => s.kind === 'kingdom').length >= 2);
+  check('settlements do not overlap', WorldGen.SETTLEMENTS.every((a, i) =>
+    WorldGen.SETTLEMENTS.every((b, j) => i === j || Math.hypot(a.x - b.x, a.y - b.y) > a.r + b.r + 6)));
+  check('every settlement has buildings & palette', WorldGen.SETTLEMENTS.every(s => (s.buildings || []).length >= 2 && s.pal && s.pal.roof));
+  check('capital detailed (8+ buildings)', WorldGen.SETTLEMENTS[0].buildings.length >= 8);
+  check('buildings are solid', (() => { const b = WorldGen.buildings[0]; return World.solidTile(b.x, b.y) === true; })());
+  const far = WorldGen.settlement('zafira');
+  check('desert kingdom sits in the desert', ['desert', 'dunes'].includes(WorldGen.biomeKeyAt(far.x + far.r + 4, far.y)));
+  check('roads link the capital to every city', WorldGen.roads.length >= (WorldGen.SETTLEMENTS.length - 1) * 4);
+  check('roads are walkable', (() => {
+    const r = WorldGen.roads[0];
+    const mx = Math.round((r.a.x + r.b.x) / 2), my = Math.round((r.a.y + r.b.y) / 2);
+    return WorldGen.terrainAt(mx, my) === TERRAIN.ROAD && !World.solidTile(mx, my);
+  })());
+  check('no resource nodes on roads', (() => {
+    const r = WorldGen.roads[0];
+    return World.resourceAt(Math.round((r.a.x + r.b.x) / 2), Math.round((r.a.y + r.b.y) / 2)) === null;
+  })());
+
+  console.log('— dungeon themes —');
+  const allKeys = Object.keys(GameData.dungeons);
+  check('every dungeon has a theme', allKeys.every(k => !!DungeonGen.theme(k, GameData.dungeons[k])));
+  const gens = new Set(allKeys.map(k => DungeonGen.theme(k, GameData.dungeons[k]).gen));
+  check('layout generators vary (' + gens.size + ')', gens.size >= 4);
+  const pals = new Set(allKeys.map(k => DungeonGen.theme(k, GameData.dungeons[k]).pal));
+  check('palettes vary (' + pals.size + ')', pals.size >= 12);
+  check('theme matches the name: volcanic_depths', DungeonGen.theme('volcanic_depths').hazard === 'lava');
+  check('theme matches the name: frozen_citadel', DungeonGen.theme('frozen_citadel').pal === 'ice');
+  check('theme matches the name: hollowfen (swamp)', DungeonGen.theme('hollowfen').pal === 'swamp');
+  check('theme matches the name: cloud_kingdom (sky)', DungeonGen.theme('cloud_kingdom').gen === 'islands');
+  check('theme matches the name: bandit_camp (open camp)', DungeonGen.theme('bandit_camp').gen === 'open');
+  check('unknown dungeon falls back by keyword', themeByName('sunken_ice_temple', 'Sunken Ice Temple').pal === 'ice');
+  for (const k of allKeys) {
+    const L = DungeonGen.layout(k, GameData.dungeons[k]);
+    if (!L.props.length || !L.rooms.length) { check('layout has rooms & props: ' + k, false); break; }
+  }
+  check('layouts have rooms & props', allKeys.every(k => {
+    const L = DungeonGen.layout(k, GameData.dungeons[k]);
+    return L.rooms.length > 0 && L.props.length > 0;
+  }));
+  check('dungeon entrances are walkable', allKeys.every(k => {
+    const gate = World.gates.find(g => g.key === k);
+    Dungeons.enter(gate);
+    const ok = World.mode === 'dungeon' ? !World.solidTile(0, 0) : true;
+    if (World.mode === 'dungeon') { World.dungeonKills = 0; Dungeons.exit(false); }
+    return ok;
+  }));
+  check('dungeon gates land in their theme biome', (() => {
+    let ok = 0;
+    for (const g of World.gates) {
+      const th = DungeonGen.theme(g.key, GameData.dungeons[g.key]);
+      if (g.biome === th.biome) ok++;
+    }
+    return ok >= World.gates.length * 0.5;
+  })());
+  check('gates spread out (no stacking)', World.gates.every((g, i) =>
+    World.gates.every((h, j) => i === j || Math.hypot(g.tx - h.tx, g.ty - h.ty) > 6)));
 
   console.log('— agility obstacles —');
   check('obstacles built', (World.obstacles || []).length >= 7);

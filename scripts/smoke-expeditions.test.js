@@ -70,12 +70,13 @@ function loadScripts() {
   const files = [
     'web/js/util.js', 'web/js/game-bundle.js', 'web/js/data.js', 'web/js/sim.js',
     'web/js/state.js', 'web/js/systems.js', 'web/js/engine.js', 'web/js/i18n.js',
-    'web/js/expedition-core.js', 'web/js/expedition-world.js', 'web/js/expedition-ui.js',
+    'web/js/expedition-core.js', 'web/js/expedition-worldgen.js', 'web/js/expedition-world.js',
+    'web/js/expedition-art.js', 'web/js/expedition-ui.js',
   ];
   const code = files.map(f => fs.readFileSync(path.join(root, f), 'utf-8')).join('\n;\n');
   const out = {};
   const fn = new Function(...Object.keys(sandbox), '__out', code +
-    '\n;__out.exp = { EXPGUI, World, EXP, tt, I18n, State, Engine, GameData, TILE, Dungeons, XU }; __out.done = true;');
+    '\n;__out.exp = { EXPGUI, World, EXP, tt, I18n, State, Engine, GameData, TILE, Dungeons, XU, WorldGen, DungeonGen, EXPART, BIOMES }; __out.done = true;');
   const args = Object.values(sandbox).concat([out]);
   fn(...args);
   if (!out.done) throw new Error('sandbox evaluation incomplete');
