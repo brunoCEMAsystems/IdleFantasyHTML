@@ -14,6 +14,9 @@ const EXPGUI = {
   usingTouch: false,
   SAVE_POS_KEY: 'expeditions_pos_v1',
   _saveT: 0,
+  _queueOpen: false,      // painel da fila de sessões aberto
+  _queueSig: '',          // assinatura da fila/sessão (para re-render sob demanda)
+  _lastQueueTick: 0,
 
   /* ============================ BOOT ============================ */
 
@@ -21,6 +24,9 @@ const EXPGUI = {
     await GameData.loadAll();
     EXP.buildLists();
     if (!State.load()) { State.init(); State.save(); }
+    // i18n do Hub: o Expeditions segue o idioma salvo (mesmo save do modo Hub)
+    await I18n.load(State.state.lang || I18n.autoDetect());
+    document.documentElement.lang = I18n.locale;
     World.buildGates();
     World.buildObstacles();
     World.makeNPCs();
@@ -28,8 +34,26 @@ const EXPGUI = {
     this.buildSprites();
     this.bind();
     this.resize();
-    this.showMenuHero();
+    this.applyI18n();
     requestAnimationFrame(this.loop.bind(this));
+  },
+
+  /** Aplica os textos estáticos do HTML e os re-renderizáveis via i18n. */
+  applyI18n() {
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const v = I18n.t(el.getAttribute('data-i18n'));
+      if (v != null) el.textContent = v;
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const v = I18n.t(el.getAttribute('data-i18n-title'));
+      if (v != null) el.title = v;
+    });
+    // dica do menu tem marcação (<b>/<br>), então usa innerHTML
+    const hintEl = document.getElementById('menuhint');
+    if (hintEl) hintEl.innerHTML = tt('web_exp_menu_hint');
+    this.showMenuHero();
+    // recria as abas do diário se já existirem (idioma trocado em outra aba)
+    if (document.getElementById('tabpages')?.children.length) this.buildTabs();
   },
 
   buildHeroSprites() {
@@ -68,8 +92,8 @@ const EXPGUI = {
 
   showMenuHero() {
     const st = State.state;
-    const html = '🧝 Herói compartilhado com o Hub — Nível total <b>' + State.totalLevel() +
-      '</b> · 🪙 <b>' + Util.fmt(st.coins) + '</b> · Combate <b>' + EXP.combatLevel() + '</b>';
+    const html = tt('web_exp_menu_hero', [State.totalLevel(), Util.fmt(st.coins), EXP.combatLevel()],
+      '🧝 Herói compartilhado com o Hub — Nível total <b>{1}</b> · 🪙 <b>{2}</b> · Combate <b>{3}</b>');
     document.getElementById('menuhero').innerHTML = html;
   },
 
@@ -98,14 +122,16 @@ const EXPGUI = {
     this.showTouch(true);
     this.buildTabs();
     this.updateBanner();
-    this.toast('⚔️ Bem-vindo a Expeditions!');
+    this.toast(tt('web_exp_toast_welcome'));
   },
 
   onDeath() {
     this.state = 'dead';
-    const wasDungeon = World.mode === 'dungeon' ? ' em ' + (GameData.dungeons[World.dungeonKey]?.display_name || '') : '';
+    const dungeon = GameData.dungeons[World.dungeonKey]?.display_name;
     document.getElementById('deathinfo').innerHTML =
-      'Você caiu' + wasDungeon + ' após ganhar <b>' + Util.fmt(World.sessionCoins) + '</b> 🪙 nesta sessão.';
+      World.mode === 'dungeon' && dungeon
+        ? tt('web_exp_death_info_dungeon', [dungeon, Util.fmt(World.sessionCoins)])
+        : tt('web_exp_death_info', [Util.fmt(World.sessionCoins)]);
     document.getElementById('hud').classList.remove('visible');
     document.getElementById('death').classList.remove('hidden');
     State.save();
@@ -121,7 +147,7 @@ const EXPGUI = {
     document.getElementById('death').classList.add('hidden');
     document.getElementById('hud').classList.add('visible');
     this.updateBanner();
-    this.toast('Você renasceu na cidade. O XP continua seu!');
+    this.toast(tt('web_exp_respawn_toast'));
   },
 
   savePos() {
@@ -188,6 +214,8 @@ const EXPGUI = {
     document.getElementById('eatchip').addEventListener('click', () => this.eatFood(false));
     document.getElementById('hubchip').addEventListener('click', () => this.gotoHub());
     document.getElementById('mapchip').addEventListener('click', () => this.toggleBigMap());
+    document.getElementById('queuechip').addEventListener('click', () => this.toggleQueue());
+    document.getElementById('closequeue').addEventListener('click', () => this.toggleQueue());
     document.getElementById('closebigmap').addEventListener('click', () => this.toggleBigMap());
     document.getElementById('playbtn').addEventListener('click', () => this.startGame());
     document.getElementById('hubbtn').addEventListener('click', () => this.gotoHub());
@@ -225,10 +253,10 @@ const EXPGUI = {
     const remembered = State.state.styleWeapons?.[s];
     if (remembered && State.count(remembered) > 0 && State.equippedItem('weapon') !== remembered) {
       const err = State.equip(remembered);
-      if (!err) this.toast('Equipado: ' + GameData.name(remembered));
+      if (!err) this.toast(tt('web_exp_toast_equipped', [GameData.name(remembered)]));
     }
     State.save();
-    this.toast('Estilo: ' + EXP.styleName(s));
+    this.toast(tt('web_exp_toast_style', [EXP.styleName(s)]));
     this.updateHUD();
   },
 
@@ -239,36 +267,43 @@ const EXPGUI = {
     if (World.mode === 'dungeon') {
       const d = GameData.dungeons[World.dungeonKey];
       const dist = Math.hypot(p.x - (TILE / 2 + 6), p.y - (TILE / 2 + 6));
-      if (dist < 60) return { label: '🚪 Sair — ' + (d?.display_name || ''), sub: World.dungeonKills >= 8 ? 'Run concluída (' + World.dungeonKills + ' abates)' : World.dungeonKills + '/8 abates para a run', action: () => Dungeons.exit(true) };
+      if (dist < 60) return {
+        label: tt('web_exp_interact_dungeon_exit', [d?.display_name || '']),
+        sub: World.dungeonKills >= 8
+          ? tt('web_exp_interact_run_done', [World.dungeonKills])
+          : tt('web_exp_interact_run_progress', [World.dungeonKills]),
+        action: () => Dungeons.exit(true),
+      };
       return null;
     }
     // portal do hub
     if (Math.hypot(p.x - (World.PORTAL.x * TILE + 16), p.y - (World.PORTAL.y * TILE + 16)) < 52)
-      return { label: '🌀 Voltar ao modo Hub (idle)', sub: 'mesmo herói, mesmo save', action: () => this.gotoHub() };
+      return { label: tt('web_exp_interact_hub'), sub: tt('web_exp_interact_hub_sub'), action: () => this.gotoHub() };
     // edifícios
     const ptx = Math.floor(p.x / TILE), pty = Math.floor(p.y / TILE);
     for (const b of World.BUILDINGS) {
       if (ptx >= b.x - 1 && ptx <= b.x + b.w && pty >= b.y - 1 && pty <= b.y + b.h) {
-        if (b.key === 'shop') return { label: '🛒 ' + b.name, sub: 'comprar/vender', action: () => this.openJournalTab('shop') };
-        if (b.key === 'church') return { label: '⛪ ' + b.name, sub: 'orações e bênçãos', action: () => this.openJournalTab('pray') };
-        if (b.key === 'workshop') return { label: '🏗️ ' + b.name, sub: 'oficina de construção — móveis e materiais', action: () => this.openJournalTab('build') };
-        if (b.key === 'trade') return { label: '🐎 ' + b.name, sub: 'despache caravanas (Mercantil)', action: () => this.openJournalTab('trade') };
+        const name = EXP.buildingName(b);
+        if (b.key === 'shop') return { label: '🛒 ' + name, sub: tt('web_exp_interact_shop_sub'), action: () => this.openJournalTab('shop') };
+        if (b.key === 'church') return { label: '⛪ ' + name, sub: tt('web_exp_interact_church_sub'), action: () => this.openJournalTab('pray') };
+        if (b.key === 'workshop') return { label: '🏗️ ' + name, sub: tt('web_exp_interact_workshop_sub'), action: () => this.openJournalTab('build') };
+        if (b.key === 'trade') return { label: '🐎 ' + name, sub: tt('web_exp_interact_trade_sub'), action: () => this.openJournalTab('trade') };
       }
     }
     // Slayer Master
     if (Math.hypot(p.x - (World.NPC_HOME.x * TILE + 16), p.y - (World.NPC_HOME.y * TILE + 16)) < 52)
-      return { label: '🗡️ Mestre Slayer', sub: 'tarefas de caça', action: () => this.openJournalTab('slayer') };
+      return { label: tt('web_exp_interact_slayer'), sub: tt('web_exp_interact_slayer_sub'), action: () => this.openJournalTab('slayer') };
     // plantações
     for (let i = 0; i < World.FARM_SPOTS.length; i++) {
       const s = World.FARM_SPOTS[i];
       if (Math.hypot(p.x - (s.x * TILE + 16), p.y - (s.y * TILE + 16)) < 40) {
         const patch = State.state.farmingPatches[i];
-        if (i >= State.patchCount()) return { label: '🔒 Canteiro travado', sub: 'Agricultura 20/40 desbloqueia mais canteiros', action: () => { } };
-        if (!patch) return { label: '🌾 Canteiro vazio', sub: 'plantar semente', action: () => this.openJournalTab('farm') };
+        if (i >= State.patchCount()) return { label: tt('web_exp_interact_patch_locked'), sub: tt('web_exp_interact_patch_locked_sub'), action: () => { } };
+        if (!patch) return { label: tt('web_exp_interact_patch_empty'), sub: tt('web_exp_interact_patch_empty_sub'), action: () => this.openJournalTab('farm') };
         const crop = GameData.crops[patch.crop];
-        if (Systems.cropReady(patch)) return { label: '🌾 Colher ' + crop.display_name, action: () => this.harvest(i + 1) };
+        if (Systems.cropReady(patch)) return { label: tt('web_exp_interact_harvest', [crop.display_name]), action: () => this.harvest(i + 1) };
         const left = Systems.patchTimeLeftMs(patch);
-        return { label: '🌱 ' + crop.display_name + ' crescendo', sub: 'pronto em ' + Util.fmtTime(left), action: () => this.openJournalTab('farm') };
+        return { label: tt('web_exp_interact_growing', [crop.display_name]), sub: tt('web_exp_interact_growing_sub', [Util.fmtTime(left)]), action: () => this.openJournalTab('farm') };
       }
     }
     // obstáculos de agilidade (anel fora da muralha)
@@ -276,8 +311,8 @@ const EXPGUI = {
     if (ob) {
       const course = Agility.currentCourse();
       return {
-        label: '🤸 Obstáculo: ' + course.def.display_name,
-        sub: 'Agilidade ' + course.def.level_required + '+ · +' + course.def.xp_per_success + ' XP por sucesso',
+        label: tt('web_exp_interact_obstacle', [course.def.display_name]),
+        sub: tt('web_exp_interact_obstacle_sub', [course.def.level_required, course.def.xp_per_success]),
         action: () => Agility.attempt(ob),
       };
     }
@@ -287,15 +322,17 @@ const EXPGUI = {
       const d = Math.hypot(npc.x - p.x, npc.y - p.y);
       if (d < bd) { bd = d; bestNpc = npc; }
     }
-    if (bestNpc) return { label: '🥷 Furtar: ' + bestNpc.name, sub: 'Roubo ' + bestNpc.def.level_required + '+', action: () => Thieving.attempt(bestNpc) };
+    if (bestNpc) return { label: tt('web_exp_interact_pickpocket', [bestNpc.name]), sub: tt('web_exp_interact_pickpocket_sub', [bestNpc.def.level_required]), action: () => Thieving.attempt(bestNpc) };
     // entradas de dungeon
     const gate = World.gateNear(p.x, p.y, 56);
     if (gate) {
       const d = GameData.dungeons[gate.key];
       const unlocked = State.dungeonUnlocked(gate.key);
       return {
-        label: (unlocked ? '🏰 Entrar: ' : '🔒 Selada: ') + d.display_name,
-        sub: 'nível recomendado ' + (d.recommended_level || 1) + (unlocked ? '' : ' — desbloqueie via expedições no Hub'),
+        label: (unlocked ? tt('web_exp_interact_dungeon_enter', [d.display_name]) : tt('web_exp_interact_dungeon_sealed', [d.display_name])),
+        sub: unlocked
+          ? tt('web_exp_interact_dungeon_sub', [d.recommended_level || 1])
+          : tt('web_exp_interact_dungeon_locked_sub', [d.recommended_level || 1]),
         action: () => Dungeons.enter(gate),
       };
     }
@@ -310,8 +347,8 @@ const EXPGUI = {
   harvest(patchNumber) {
     const r = Systems.harvestPatch(patchNumber);
     if (r.error) { this.toast(r.error); SFX.error(); return; }
-    if (r.bean) { this.toast('🫘 Você subiu pelo pé de feijão — Cloud Kingdom desbloqueada!'); SFX.levelup(); this.flash('lvflash'); }
-    else { this.toast('🌾 Colheita: +' + r.yield + ' ' + GameData.name(r.crop)); SFX.pickup(); }
+    if (r.bean) { this.toast(tt('web_exp_toast_bean')); SFX.levelup(); this.flash('lvflash'); }
+    else { this.toast(tt('web_exp_toast_harvest', [r.yield, GameData.name(r.crop)])); SFX.pickup(); }
     State.save();
   },
 
@@ -327,12 +364,12 @@ const EXPGUI = {
   eatFood(auto) {
     const p = World.player;
     const key = this.bestFood();
-    if (!key) { if (!auto) { this.toast('Sem comida! Cozinhe no Diário 🍳'); SFX.error(); } return; }
-    if (p.hp >= EXP.maxHp()) { if (!auto) this.toast('HP cheio'); return; }
+    if (!key) { if (!auto) { this.toast(tt('web_exp_toast_no_food')); SFX.error(); } return; }
+    if (p.hp >= EXP.maxHp()) { if (!auto) this.toast(tt('web_exp_toast_hp_full')); return; }
     State.removeItem(key, 1);
     p.hp = Math.min(EXP.maxHp(), p.hp + GameData.foodHeals[key]);
     if (World.mode === 'dungeon') World.dungeonFoodEaten++;
-    if (!auto) { this.flash('healflash'); this.toast('🍖 ' + GameData.name(key) + ' +' + GameData.foodHeals[key] + ' HP'); SFX.buy(); }
+    if (!auto) { this.flash('healflash'); this.toast(tt('web_exp_toast_ate', [GameData.name(key), GameData.foodHeals[key]])); SFX.buy(); }
   },
 
   /* ============================ AVISOS ============================ */
@@ -349,7 +386,7 @@ const EXPGUI = {
     requestAnimationFrame(() => requestAnimationFrame(() => { el.style.opacity = '0'; }));
   },
   onLevelUp(skill, before, after) {
-    this.toast('⭐ ' + EXP.skillName(skill) + ' nível ' + after + '!');
+    this.toast(tt('web_exp_toast_levelup', [EXP.skillName(skill), after]));
     this.flash('lvflash');
     SFX.levelup();
     if (skill === 'hitpoints') World.player.hp = Math.min(EXP.maxHp(), World.player.hp + 12);
@@ -362,7 +399,7 @@ const EXPGUI = {
     if (World.mode === 'dungeon') {
       const d = GameData.dungeons[World.dungeonKey];
       el.style.display = 'block';
-      el.textContent = '🏰 ' + (d?.display_name || '') + ' · ' + World.dungeonKills + ' abates';
+      el.textContent = tt('web_exp_dungeon_banner', [d?.display_name || '', World.dungeonKills]);
     } else el.style.display = 'none';
   },
 
@@ -371,7 +408,7 @@ const EXPGUI = {
     const maxHp = EXP.maxHp();
     document.getElementById('hpfill').style.width = XU.clamp(p.hp / maxHp * 100, 0, 100) + '%';
     document.getElementById('hptext').textContent = Math.ceil(p.hp) + '/' + maxHp;
-    document.getElementById('lvltext').textContent = 'Combate ' + EXP.combatLevel();
+    document.getElementById('lvltext').textContent = tt('web_exp_hud_combat', [EXP.combatLevel()]);
     const style = State.state.combatStyle;
     document.getElementById('stylename').textContent = EXP.styleName(style).toUpperCase();
     // barra de XP da skill principal do estilo
@@ -380,10 +417,10 @@ const EXPGUI = {
     const nxt = lvl >= 99 ? cur : Sim.xpForLevel(lvl + 1), prv = Sim.xpForLevel(lvl);
     document.getElementById('xpfill').style.width = (lvl >= 99 ? 100 : XU.clamp((cur - prv) / (nxt - prv) * 100, 0, 100)) + '%';
     document.getElementById('ammotext').textContent =
-      style === 'ranged' ? ('Flechas: ' + (EXP.bestArrow() ? State.count(EXP.bestArrow().key) : 0))
-        : style === 'magic' ? (State.state.activeSpell ? GameData.spells[State.state.activeSpell].display_name : 'sem magia') : '';
+      style === 'ranged' ? tt('web_exp_hud_arrows', [EXP.bestArrow() ? State.count(EXP.bestArrow().key) : 0])
+        : style === 'magic' ? (State.state.activeSpell ? GameData.spells[State.state.activeSpell].display_name : tt('web_exp_hud_no_spell')) : '';
     document.getElementById('scoretext').textContent = Util.fmt(State.state.coins);
-    document.getElementById('stylechip').textContent = 'Estilo: ' + EXP.styleName(style) + ' [Q]';
+    document.getElementById('stylechip').textContent = tt('web_exp_hud_style', [EXP.styleName(style)]);
     const inv = State.state.inventory;
     const countPred = pred => Object.entries(inv).reduce((s, [k, v]) => pred(k) ? s + v : s, 0);
     document.getElementById('rlog').textContent = countPred(k => k.includes('log'));
@@ -396,16 +433,10 @@ const EXPGUI = {
     const tc = document.getElementById('taskchip');
     if (task) {
       const e = GameData.enemies[task.enemyKey];
-      tc.textContent = '🗡️ Slayer: ' + (e ? e.display_name : task.enemyKey) + ' (' + task.killsCompleted + '/' + task.targetKills + ')';
+      tc.textContent = tt('web_exp_hud_slayer', [e ? e.display_name : task.enemyKey, task.killsCompleted, task.targetKills]);
     } else tc.textContent = '';
-    // sessão do hub em andamento
-    const sess = State.state.session;
-    const sc = document.getElementById('sesschip');
-    if (sess) {
-      const left = (sess.endsAt || sess.startedAt + 3600000) - Date.now();
-      sc.style.display = 'block';
-      sc.textContent = '⏳ Sessão do Hub em andamento — colete no modo Hub (' + Util.fmtTime(left) + ')';
-    } else sc.style.display = 'none';
+    // sessão do hub em andamento + fila do Queue Master
+    this.updateQueueChips();
     // prompt de interação
     const it = this.state === 'playing' && !this.paused ? this.nearestInteract() : null;
     this.interactTarget = it;
@@ -416,17 +447,41 @@ const EXPGUI = {
     } else pr.style.display = 'none';
     if (World.mode === 'dungeon') {
       const d = GameData.dungeons[World.dungeonKey];
-      document.getElementById('dungbanner').textContent = '🏰 ' + (d?.display_name || '') + ' · ' + World.dungeonKills + ' abates';
+      document.getElementById('dungbanner').textContent = tt('web_exp_dungeon_banner', [d?.display_name || '', World.dungeonKills]);
     }
+  },
+
+  /** Chips de sessão/fila do Hub no HUD (a fila do Queue Master fica visível aqui também). */
+  updateQueueChips() {
+    const sess = Engine.session();
+    const q = State.state.sessionQueue || [];
+    const sc = document.getElementById('sesschip');
+    if (sess) {
+      const left = (sess.endsAt || sess.startedAt + 3600000) - Date.now();
+      sc.style.display = 'block';
+      sc.textContent = tt('web_exp_hud_session', [sess.label || 'session', Util.fmtTime(left)]);
+    } else sc.style.display = 'none';
+    const qc = document.getElementById('queuechip');
+    if (qc) {
+      if (sess || q.length) {
+        qc.style.display = 'block';
+        qc.textContent = tt('web_exp_chip_queue', [q.length, State.maxQueueSize()]);
+      } else qc.style.display = 'none';
+    }
+    // re-renderiza o painel aberto só quando a fila/sessão muda de estado
+    const sig = (sess ? (Engine.isComplete(sess) ? 'done:' : 'run:') + (sess.label || '') : 'no') +
+      '|' + q.map(i => i.label || i.activityKey || '').join(',');
+    if (this._queueOpen && sig !== this._queueSig) { this._queueSig = sig; this.rQueuePanel(); }
   },
 
   /* ============================ DIÁRIO ============================ */
 
+  // [id, chave i18n] — os rótulos são resolvidos via tt() no buildTabs
   TABS: [
-    ['skills', 'Skills'], ['equip', 'Equipar'], ['forge', 'Forja'], ['fletch', 'Fletching'],
-    ['craft', 'Crafting'], ['cook', 'Cozinha'], ['herb', 'Alquimia'], ['runes', 'Runas'],
-    ['build', 'Construção'], ['trade', 'Comércio'], ['pray', 'Orações'], ['magic', 'Magias'],
-    ['farm', 'Plantação'], ['slayer', 'Slayer'], ['shop', 'Loja'], ['codex', 'Codex'],
+    ['skills', 'web_exp_tab_skills'], ['equip', 'web_exp_tab_equip'], ['forge', 'web_exp_tab_forge'], ['fletch', 'web_exp_tab_fletch'],
+    ['craft', 'web_exp_tab_craft'], ['cook', 'web_exp_tab_cook'], ['herb', 'web_exp_tab_herb'], ['runes', 'web_exp_tab_runes'],
+    ['build', 'web_exp_tab_build'], ['trade', 'web_exp_tab_trade'], ['pray', 'web_exp_tab_pray'], ['magic', 'web_exp_tab_magic'],
+    ['farm', 'web_exp_tab_farm'], ['slayer', 'web_exp_tab_slayer'], ['shop', 'web_exp_tab_shop'], ['codex', 'web_exp_tab_codex'],
   ],
 
   toggleJournal() {
@@ -447,6 +502,93 @@ const EXPGUI = {
   openJournalTab(id) {
     if (!this.paused) this.toggleJournal();
     this.selectTab(id);
+  },
+
+  /* ============================ FILA DE SESSÕES ============================ */
+
+  /** Abre/fecha o painel da fila (Queue Master) visível no modo Expeditions. */
+  toggleQueue() {
+    const panel = document.getElementById('queuepanel');
+    if (!panel || this.state === 'menu' || this.state === 'dead') return;
+    this._queueOpen = panel.classList.contains('hidden');
+    if (this._queueOpen) {
+      this.paused = true;
+      panel.classList.remove('hidden');
+      this.rQueuePanel();
+    } else {
+      panel.classList.add('hidden');
+      this.paused = false;
+    }
+  },
+
+  /** Renderiza o painel da fila: sessão atual + itens enfileirados (com remover/coletar). */
+  rQueuePanel() {
+    const el = document.getElementById('queuebody');
+    if (!el) return;
+    el.innerHTML = '';
+    const sess = Engine.session();
+    const q = State.state.sessionQueue || [];
+    // sessão atual do Hub
+    if (sess) {
+      const done = Engine.isComplete(sess);
+      const left = sess.endsAt - Date.now();
+      const row = this.rowEl('<span class="nm">' + tt('web_exp_queue_current') + ': <b>' + Util.esc(sess.label || 'session') + '</b></span>' +
+        '<span class="side"><span class="' + (done ? 'ok' : '') + '">' + (done ? tt('web_exp_queue_ready') : Util.fmtTime(left)) + '</span>' +
+        (done ? '<button class="buybtn equip">' + tt('web_exp_btn_collect') + '</button>' : '') + '</span>');
+      const btn = row.querySelector('button');
+      if (btn) btn.onclick = () => this.collectSession();
+      el.appendChild(row);
+    }
+    // itens na fila
+    if (q.length) {
+      q.forEach((item, i) => {
+        const row = this.rowEl('<span class="nm"><span class="qnum">' + (i + 1) + '</span> ' + Util.esc(item.label || item.activityKey || 'session') + '</span>' +
+          '<span class="side"><span class="catg">' + (i === 0 && !sess ? tt('web_exp_queue_starting') : tt('web_exp_queue_item_sub')) + '</span>' +
+          '<button class="buybtn uneq" title="' + tt('web_exp_queue_remove') + '">✕</button></span>');
+        row.querySelector('button').onclick = () => { Engine.removeQueued(i); this.rQueuePanel(); this.updateQueueChips(); };
+        el.appendChild(row);
+      });
+    }
+    if (!sess && !q.length) el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_queue_empty') + '</span>'));
+    if (State.maxQueueSize() < 6) el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_queue_upgrade') + '</span>'));
+  },
+
+  /** Coleta a sessão do Hub concluída direto do Expeditions. */
+  collectSession() {
+    const sess = Engine.session();
+    if (!sess || !Engine.isComplete(sess)) { SFX.error(); return; }
+    const summary = Engine.collect();
+    if (summary) {
+      const xp = Object.values(summary.xpBySkill || {}).reduce((a, b) => a + b, 0);
+      this.toast(tt('web_exp_queue_collected', [sess.label || 'session', Util.fmt(xp)]));
+      SFX.levelup();
+    }
+    this.rQueuePanel(); this.updateQueueChips();
+    State.save();
+  },
+
+  /**
+   * Port do auto-avanço da fila do Hub (main.js): com a fila populada, uma
+   * sessão concluída é coletada e a próxima começa — mesmo jogando Expeditions.
+   */
+  queueTick() {
+    const q = State.state.sessionQueue || [];
+    const sess = Engine.session();
+    if (sess && sess.endsAt <= Date.now() && q.length > 0) {
+      const label = sess.label || 'session';
+      const summary = Engine.collect();
+      if (summary) {
+        const xp = Object.values(summary.xpBySkill || {}).reduce((a, b) => a + b, 0);
+        this.toast(tt('web_exp_queue_collected', [label, Util.fmt(xp)]));
+        SFX.levelup();
+      }
+      this.rQueuePanel(); this.updateQueueChips();
+      State.save();
+    } else if (!sess && q.length > 0 && Engine.startNextQueued()) {
+      const ns = Engine.session();
+      if (ns) this.toast(tt('web_exp_queue_started', [ns.label || 'session']));
+      this.rQueuePanel(); this.updateQueueChips();
+    }
   },
 
   /* ============================ MAPA GRANDE [M] ============================ */
@@ -534,9 +676,9 @@ const EXPGUI = {
     ctx.beginPath(); ctx.arc(px(ptx), px(pty), 3.5, 0, 7); ctx.fill();
     // rótulos
     ctx.fillStyle = '#ffd97a'; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
-    ctx.fillText('🏰 CIDADE', C, px(-18));
+    ctx.fillText(tt('web_exp_map_city'), C, px(-18));
     ctx.fillText('N', C, 14);
-    // legenda lateral
+    // legenda lateral (com viagem rápida)
     const legend = document.getElementById('maplegend');
     legend.innerHTML = '';
     const rows = this.bigMapLegend();
@@ -546,30 +688,84 @@ const EXPGUI = {
       d.innerHTML = html;
       d.onclick = onclick;
       legend.appendChild(d);
+      return d;
     };
-    mkRow('<span>🏰 <b>Cidade murada</b> <span style="color:var(--muted)">· loja, igreja, oficina, comércio, Slayer, horta</span></span><span class="side">centro</span>', '', () => this._mapHint('🏰 A cidade: 🛒 Loja · ⛪ Igreja · 🏗️ Construção · 🐎 Comércio · 🗡️ Slayer · 🌾 horta · 🥷 alvos de Roubo · 🌀 portal do Hub'));
-    mkRow('<span>🤸 <b>Circuito de Agilidade</b></span><span class="side">anel azul</span>', '', () => this._mapHint('🤸 8 obstáculos ao redor da muralha — '+ Agility.currentCourse().def.display_name +' (+' + Agility.currentCourse().def.xp_per_success + ' XP por sucesso)'));
+    const inDungeon = World.mode === 'dungeon';
+    const travelBtn = () => '<button class="map-travel' + (inDungeon ? ' disabled' : '') + '" title="' + tt('web_exp_map_travel_title') + '">' + tt('web_exp_map_travel') + '</button>';
+    // cidade: linha com viagem rápida de volta
+    mkRow('<span>' + tt('web_exp_map_city_row') + '</span><span class="side"><span>' + tt('web_exp_map_city_side') + '</span>' + travelBtn() + '</span>',
+      '', () => this._mapHint(tt('web_exp_map_city_hint')));
+    mkRow('<span>' + tt('web_exp_map_agility_row') + '</span><span class="side">' + tt('web_exp_map_agility_side') + '</span>', '',
+      () => this._mapHint(tt('web_exp_map_agility_hint', [Agility.currentCourse().def.display_name, Agility.currentCourse().def.xp_per_success])));
     rows.forEach(r => {
-      mkRow(
+      const dist = r.distTiles < 1000 ? tt('web_exp_map_tiles', [r.distTiles]) : tt('web_exp_map_ktiles', [(r.distTiles / 1000).toFixed(1)]);
+      const rowEl = mkRow(
         '<span><span class="dot" style="background:' + (r.unlocked ? '#f6c453' : '#e05252') + '"></span>' + r.idx + '. ' + r.name + '</span>' +
-        '<span class="side"><span>Nv ' + r.level + '</span><span>' + (r.distTiles < 1000 ? r.distTiles + ' tiles' : (r.distTiles / 1000).toFixed(1) + 'k tiles') + '</span></span>',
+        '<span class="side"><span>' + tt('web_exp_map_lv', [r.level]) + '</span><span>' + dist + '</span>' +
+        (r.unlocked ? travelBtn() : '') + '</span>',
         r.unlocked ? '' : 'lock',
-        () => this._mapHint((r.unlocked ? '🏰 ' : '🔒 ') + r.name + ' (Nv ' + r.level + ') — ' + r.desc)
+        () => this._mapHint(r.unlocked
+          ? tt('web_exp_map_dungeon_hint', [r.name, r.level, r.desc])
+          : tt('web_exp_map_dungeon_hint_locked', [r.name, r.level, r.desc]))
       );
+      const tb = rowEl.querySelector('.map-travel');
+      if (tb && !inDungeon) tb.onclick = e => { e.stopPropagation(); this.fastTravelToGate(r.key); };
     });
+    // botão de viagem da primeira linha (cidade)
+    const cityBtn = legend.querySelector('.map-row .map-travel');
+    if (cityBtn && !inDungeon) cityBtn.onclick = e => { e.stopPropagation(); this.fastTravelToCity(); };
     if (World.mode === 'dungeon')
-      this._mapHint('⚠️ Você está DENTRO de: ' + (GameData.dungeons[World.dungeonKey]?.display_name || '') + ' — o marcador branco mostra o portal de entrada.');
+      this._mapHint(tt('web_exp_map_inside', [GameData.dungeons[World.dungeonKey]?.display_name || '']));
+  },
+
+  /* ------------------------------ VIAGEM RÁPIDA ------------------------------ */
+
+  /** Inimigos por perto (range de aggro) impedem teleporte para fugir de combate. */
+  nearbyEnemies(maxDist = 320) {
+    const p = World.player; if (!p) return false;
+    return World.enemies.concat(World.bosses).some(e => Math.hypot(e.x - p.x, e.y - p.y) < maxDist);
+  },
+
+  /** Viaja rápido para um portal de dungeon desbloqueado (pelo Mapa [M]). */
+  fastTravelToGate(key) {
+    const gate = World.gates.find(g => g.key === key);
+    const d = GameData.dungeons[key];
+    if (!gate || !d) return;
+    if (!State.dungeonUnlocked(key)) { this.toast(tt('web_exp_map_travel_locked', [d.display_name])); SFX.error(); return; }
+    if (World.mode === 'dungeon') { this.toast(tt('web_exp_map_travel_blocked_dungeon')); SFX.error(); return; }
+    if (this.nearbyEnemies()) { this.toast(tt('web_exp_map_travel_blocked_enemies')); SFX.error(); return; }
+    const pos = World.spotNear(gate.tx, gate.ty);
+    World.player.x = pos.x; World.player.y = pos.y;
+    World.camera.x = pos.x; World.camera.y = pos.y;
+    this.toggleBigMap(); // fecha o mapa e despausa
+    SFX.portal(); this.flash('lvflash');
+    this.toast(tt('web_exp_map_travel_toast', [d.display_name]));
+    this.savePos(); State.save();
+  },
+
+  /** Viaja rápido de volta à cidade murada. */
+  fastTravelToCity() {
+    if (World.mode === 'dungeon') { this.toast(tt('web_exp_map_travel_blocked_dungeon')); SFX.error(); return; }
+    if (this.nearbyEnemies()) { this.toast(tt('web_exp_map_travel_blocked_enemies')); SFX.error(); return; }
+    const p = World.player;
+    p.x = World.PORTAL.x * TILE + 16; p.y = World.PORTAL.y * TILE + 16 + TILE;
+    World.camera.x = p.x; World.camera.y = p.y;
+    this.toggleBigMap(); // fecha o mapa e despausa
+    SFX.portal(); this.flash('lvflash');
+    this.toast(tt('web_exp_map_travel_city_toast'));
+    this.savePos(); State.save();
   },
 
   _mapHint(txt) { document.getElementById('maphint').innerHTML = txt; },
 
   buildTabs() {
     const el = document.getElementById('tabs');
+    if (!el) return;
     el.innerHTML = '';
     this.TABS.forEach((t, i) => {
       const b = document.createElement('div');
       b.className = 'tab' + (i === 0 ? ' active' : '');
-      b.textContent = t[1]; b.dataset.id = t[0];
+      b.textContent = this.tabLabel(t[0]); b.dataset.id = t[0];
       b.onclick = () => this.selectTab(t[0]);
       el.appendChild(b);
     });
@@ -581,6 +777,28 @@ const EXPGUI = {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.id === id));
     document.querySelectorAll('.tabpage').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + id));
     this.renderTab(id);
+  },
+  /** Rótulo localizado de uma aba (literais explícitos para o gerador de locales). */
+  tabLabel(id) {
+    switch (id) {
+      case 'skills': return tt('web_exp_tab_skills');
+      case 'equip': return tt('web_exp_tab_equip');
+      case 'forge': return tt('web_exp_tab_forge');
+      case 'fletch': return tt('web_exp_tab_fletch');
+      case 'craft': return tt('web_exp_tab_craft');
+      case 'cook': return tt('web_exp_tab_cook');
+      case 'herb': return tt('web_exp_tab_herb');
+      case 'runes': return tt('web_exp_tab_runes');
+      case 'build': return tt('web_exp_tab_build');
+      case 'trade': return tt('web_exp_tab_trade');
+      case 'pray': return tt('web_exp_tab_pray');
+      case 'magic': return tt('web_exp_tab_magic');
+      case 'farm': return tt('web_exp_tab_farm');
+      case 'slayer': return tt('web_exp_tab_slayer');
+      case 'shop': return tt('web_exp_tab_shop');
+      case 'codex': return tt('web_exp_tab_codex');
+      default: return id;
+    }
   },
   renderTab(id) {
     const el = document.getElementById('tab-' + id);
@@ -602,10 +820,10 @@ const EXPGUI = {
 
   /* ---- Skills ---- */
   rSkills(el) {
-    this.section(el, 'Suas Skills — nível total ' + State.totalLevel() + ' / 2077 · salvas junto com o Hub');
+    this.section(el, tt('web_exp_skills_title', [State.totalLevel()]));
     const bonus = State.blessingXpMultiplier(), boost = State.xpBoostActive();
     if (bonus > 1 || boost) {
-      const info = this.rowEl('<span class="nm">' + (boost ? '⚡ Boost 2× XP ativo' : '🙏 Bênção ativa') + '</span><span class="side"><span class="ok">XP ×' + (bonus * (boost ? 2 : 1)).toFixed(2) + '</span></span>');
+      const info = this.rowEl('<span class="nm">' + (boost ? tt('web_exp_skills_boost') : tt('web_exp_skills_blessing')) + '</span><span class="side"><span class="ok">' + tt('web_exp_skills_xp_mult', [(bonus * (boost ? 2 : 1)).toFixed(2)]) + '</span></span>');
       el.appendChild(info);
     }
     for (const def of GameData.skillDefs) {
@@ -614,22 +832,20 @@ const EXPGUI = {
       const pct = lvl >= 99 ? 100 : Math.round((cur - prv) / (nxt - prv) * 100);
       const pet = State.petBoost(def.key);
       const d = this.rowEl('<span class="nm">' + def.icon + ' ' + EXP.skillName(def.key) +
-        ' <span class="catg">[' + (EXP.GROUP_PT[def.group] || def.group) + ']</span></span>' +
-        '<span class="side"><span>Nv ' + lvl + '</span>' + (pet ? '<span class="ok">🐾+' + pet + '%</span>' : '') +
+        ' <span class="catg">[' + EXP.groupName(def.group) + ']</span></span>' +
+        '<span class="side"><span>' + tt('web_exp_lv', [lvl]) + '</span>' + (pet ? '<span class="ok">🐾+' + pet + '%</span>' : '') +
         '<div class="lvlbar"><i style="width:' + pct + '%"></i></div></span>');
       d.title = def.desc;
       el.appendChild(d);
     }
-    const note = this.rowEl('<span class="nm">ℹ️ Todos os 23 skills treináveis aqui</span><span class="side"><span>Agility: obstáculos na muralha · Construction: 🏗️ · Mercantile: 🐎</span></span>');
+    const note = this.rowEl('<span class="nm">' + tt('web_exp_skills_note') + '</span><span class="side"><span>' + tt('web_exp_skills_note_side') + '</span></span>');
     el.appendChild(note);
   },
 
   /* ---- Equipar ---- */
   rEquip(el) {
     const b = State.combatBonuses();
-    this.section(el, 'Bônus totais — Atq +' + b.attack + ' · For +' + b.strength + ' · Def +' + b.defense +
-      ' · Dist +' + b.rangedAttack + ' · Mag +' + b.magicAttack);
-    const labels = { weapon: 'Arma', shield: 'Escudo', head: 'Elmo', body: 'Peitoral', legs: 'Pernas', boots: 'Botas', cape: 'Capa', ring: 'Anel', necklace: 'Colar', pickaxe: 'Picareta', axe: 'Machado', fishing_rod: 'Vara', hammer: 'Martelo', tinderbox: 'Isqueiro', grappling_hook: 'Gancho', frying_pan: 'Panela', lockpick: 'Gazua', hoe: 'Enxada' };
+    this.section(el, tt('web_exp_equip_bonuses', [b.attack, b.strength, b.defense, b.rangedAttack, b.magicAttack]));
     for (const slot of [...State.SLOTS(), ...State.TOOL_SLOTS()]) {
       const key = State.equippedItem(slot);
       const eq = key ? GameData.equipment[key] : null;
@@ -639,26 +855,26 @@ const EXPGUI = {
         eq.magic_attack_bonus ? 'Mag ' + eq.magic_attack_bonus : null,
         eq[slot.split('_')[0] + '_efficiency'] ? '×' + eq[slot.split('_')[0] + '_efficiency'] : null,
       ].filter(Boolean).join(' · ') : '';
-      const d = this.rowEl('<span class="nm">' + (eq ? '▫️ ' + eq.display_name : '▪️ ' + (labels[slot] || slot) + ' (vazio)') + '</span>' +
+      const d = this.rowEl('<span class="nm">' + (eq ? '▫️ ' + eq.display_name : '▪️ ' + tt('web_exp_equip_empty', [EXP.slotName(slot)])) + '</span>' +
         '<span class="side">' + (stats ? '<span>' + stats + '</span>' : '') +
-        (key ? '<button class="buybtn uneq">Desequipar</button>' : '') + '</span>');
+        (key ? '<button class="buybtn uneq">' + tt('web_exp_equip_unequip') + '</button>' : '') + '</span>');
       const btn = d.querySelector('button');
       if (btn) btn.onclick = () => { State.unequip(slot); State.save(); SFX.buy(); this.renderTab('equip'); };
       el.appendChild(d);
     }
     // equipáveis no inventário
-    this.section(el, 'No inventário');
+    this.section(el, tt('web_exp_equip_in_inventory'));
     const owned = Object.entries(State.state.inventory).filter(([k]) => GameData.equipment[k]);
-    if (!owned.length) { el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Nada equipável — forje na Forja ou compre na Loja</span>')); return; }
+    if (!owned.length) { el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_equip_nothing') + '</span>')); return; }
     for (const [key] of owned) {
       const eq = GameData.equipment[key];
       const ok = State.meetsRequirements(key);
-      const d = this.rowEl('<span class="nm">' + eq.display_name + ' <span class="catg">[' + (labels[eq.slot] || eq.slot) + ']</span></span>' +
-        '<span class="side">' + (ok ? '<button class="buybtn equip">Equipar</button>' : '<span class="lock">Requisitos insuficientes</span>') + '</span>');
+      const d = this.rowEl('<span class="nm">' + eq.display_name + ' <span class="catg">[' + EXP.slotName(eq.slot) + ']</span></span>' +
+        '<span class="side">' + (ok ? '<button class="buybtn equip">' + tt('web_exp_equip_equip') + '</button>' : '<span class="lock">' + tt('web_exp_equip_req') + '</span>') + '</span>');
       const btn = d.querySelector('button');
       if (btn) btn.onclick = () => {
         const err = State.equip(key);
-        if (err) { this.toast(err); SFX.error(); } else { SFX.buy(); this.toast('Equipado: ' + eq.display_name); }
+        if (err) { this.toast(err); SFX.error(); } else { SFX.buy(); this.toast(tt('web_exp_toast_equipped', [eq.display_name])); }
         State.save(); this.renderTab('equip');
       };
       el.appendChild(d);
@@ -668,15 +884,15 @@ const EXPGUI = {
   /* ---- Receitas genéricas (smithing/fletching/crafting/herblore) ---- */
   rForge(el) {
     const all = Object.entries(GameData.recipes.smithing);
-    this.rRecipeList(el, 'smithing', all.filter(([, r]) => r.type === 'bar'), '🟨 Fundir barras');
-    this.rRecipeList(el, 'smithing', all.filter(([, r]) => r.type === 'equipment'), '⚔️ Forjar equipamento');
-    this.rRecipeList(el, 'smithing', all.filter(([, r]) => r.type === 'tool'), '🛠️ Ferramentas (picaretas, machados…)');
+    this.rRecipeList(el, 'smithing', all.filter(([, r]) => r.type === 'bar'), tt('web_exp_forge_bars'));
+    this.rRecipeList(el, 'smithing', all.filter(([, r]) => r.type === 'equipment'), tt('web_exp_forge_gear'));
+    this.rRecipeList(el, 'smithing', all.filter(([, r]) => r.type === 'tool'), tt('web_exp_forge_tools'));
   },
   rRecipes(el, skill) {
     const all = Object.entries(GameData.recipes[skill]);
     const titles = {
-      fletching: '🏹 Fletching — arcos, bestas e flechas', crafting: '💎 Crafting — joias e vidro',
-      herblore: '🧪 Herbologia — poções de combate',
+      fletching: tt('web_exp_recipe_fletching'), crafting: tt('web_exp_recipe_crafting'),
+      herblore: tt('web_exp_recipe_herblore'),
     };
     this.rRecipeList(el, skill, all, titles[skill] || skill);
   },
@@ -689,8 +905,8 @@ const EXPGUI = {
       const matsHtml = Object.entries(r.materials || {}).map(([m, n]) =>
         '<span class="' + (State.count(m) >= n ? 'ok' : 'lock') + '">' + n + '× ' + GameData.name(m) + '</span>').join(' ');
       const outName = GameData.name(outKey);
-      const d = this.rowEl('<span class="nm">' + outName + ' <span class="catg">Nv ' + (r.level_required || 1) + (r.output_quantity > 1 ? ' · x' + r.output_quantity : '') + '</span></span>' +
-        '<span class="side">' + matsHtml + '<button class="buybtn' + (lvlOk && matsOk ? '' : ' disabled') + '">Criar</button></span>');
+      const d = this.rowEl('<span class="nm">' + outName + ' <span class="catg">' + tt('web_exp_lv', [r.level_required || 1]) + (r.output_quantity > 1 ? ' · x' + r.output_quantity : '') + '</span></span>' +
+        '<span class="side">' + matsHtml + '<button class="buybtn' + (lvlOk && matsOk ? '' : ' disabled') + '">' + tt('web_exp_btn_craft') + '</button></span>');
       d.querySelector('button').onclick = () => {
         if (!lvlOk || !matsOk) { SFX.error(); return; }
         for (const [m, n] of Object.entries(r.materials || {})) State.removeItem(m, n);
@@ -709,13 +925,13 @@ const EXPGUI = {
 
   /* ---- Cozinha ---- */
   rCook(el) {
-    this.section(el, '🍳 Cozinhar — comida cura HP (P come a melhor)');
+    this.section(el, tt('web_exp_cook_title'));
     for (const [key, r] of Object.entries(GameData.recipes.cooking).sort((a, b) => a[1].level_required - b[1].level_required)) {
       const lvlOk = State.level('cooking') >= r.level_required;
       const has = State.count(r.raw_item) > 0;
-      const d = this.rowEl('<span class="nm">🍖 ' + r.display_name + ' <span class="catg">Nv ' + r.level_required + ' · +' + r.healing_value + ' HP</span></span>' +
+      const d = this.rowEl('<span class="nm">🍖 ' + r.display_name + ' <span class="catg">' + tt('web_exp_lv', [r.level_required]) + ' · +' + r.healing_value + ' HP</span></span>' +
         '<span class="side"><span class="' + (has ? 'ok' : 'lock') + '">' + State.count(r.raw_item) + '× ' + GameData.name(r.raw_item) + '</span>' +
-        '<button class="buybtn' + (lvlOk && has ? '' : ' disabled') + '">Cozinhar</button></span>');
+        '<button class="buybtn' + (lvlOk && has ? '' : ' disabled') + '">' + tt('web_exp_btn_cook') + '</button></span>');
       d.querySelector('button').onclick = () => {
         if (!lvlOk || !has) { SFX.error(); return; }
         State.removeItem(r.raw_item, 1);
@@ -728,15 +944,15 @@ const EXPGUI = {
       el.appendChild(d);
     }
     // fogueira
-    this.section(el, '🔥 Fogueira — queimar toras por XP e cinzas (Oração)');
+    this.section(el, tt('web_exp_cook_fire_title'));
     for (const [logKey, log] of Object.entries(GameData.logs)) {
       const ashKey = GameData.ashByLog[logKey];
       if (!ashKey) continue;
       const lvlOk = State.level('firemaking') >= log.level_required;
       const has = State.count(logKey) > 0;
-      const d = this.rowEl('<span class="nm">🔥 ' + GameData.name(logKey) + ' <span class="catg">Nv ' + log.level_required + ' → ' + GameData.name(ashKey) + '</span></span>' +
+      const d = this.rowEl('<span class="nm">🔥 ' + GameData.name(logKey) + ' <span class="catg">' + tt('web_exp_lv', [log.level_required]) + ' → ' + GameData.name(ashKey) + '</span></span>' +
         '<span class="side"><span class="' + (has ? 'ok' : 'lock') + '">' + State.count(logKey) + '×</span>' +
-        '<button class="buybtn' + (lvlOk && has ? '' : ' disabled') + '">Queimar</button></span>');
+        '<button class="buybtn' + (lvlOk && has ? '' : ' disabled') + '">' + tt('web_exp_btn_burn') + '</button></span>');
       d.querySelector('button').onclick = () => {
         if (!lvlOk || !has) { SFX.error(); return; }
         const eff = State.toolEfficiency('tinderbox', 'firemaking', log.level_required);
@@ -752,17 +968,17 @@ const EXPGUI = {
 
   /* ---- Runas ---- */
   rRunes(el) {
-    this.section(el, '🔮 Runecrafting — essência rúnica (minere rochas roxas) em runas');
+    this.section(el, tt('web_exp_runes_title'));
     const lvl = State.level('runecrafting');
     const mult = lvl >= 75 ? 3 : lvl >= 50 ? 2 : 1;
-    el.appendChild(this.rowEl('<span class="nm">Multiplicador atual</span><span class="side"><span class="' + (mult > 1 ? 'ok' : '') + '">×' + mult + (mult > 1 ? '' : ' (×2 no nv 50, ×3 no 75)') + '</span></span>'));
+    el.appendChild(this.rowEl('<span class="nm">' + tt('web_exp_runes_mult') + '</span><span class="side"><span class="' + (mult > 1 ? 'ok' : '') + '">' + tt('web_exp_runes_x', [mult]) + (mult > 1 ? '' : tt('web_exp_runes_mult_hint')) + '</span></span>'));
     for (const [key, r] of Object.entries(GameData.runes).sort((a, b) => a[1].level_required - b[1].level_required)) {
       const lvlOk = lvl >= r.level_required;
       const cost = r.essence_cost || 1;
       const has = State.count('rune_essence') >= cost;
-      const d = this.rowEl('<span class="nm">🔮 ' + r.display_name + ' <span class="catg">Nv ' + r.level_required + ' → ' + mult + ' runa' + (mult > 1 ? 's' : '') + '</span></span>' +
-        '<span class="side"><span class="' + (has ? 'ok' : 'lock') + '">' + cost + '× Essência (' + State.count('rune_essence') + ')</span>' +
-        '<button class="buybtn' + (lvlOk && has ? '' : ' disabled') + '">Criar</button></span>');
+      const d = this.rowEl('<span class="nm">🔮 ' + r.display_name + ' <span class="catg">' + tt('web_exp_lv', [r.level_required]) + ' ' + (mult > 1 ? tt('web_exp_runes_many', [mult]) : tt('web_exp_runes_one', [mult])) + '</span></span>' +
+        '<span class="side"><span class="' + (has ? 'ok' : 'lock') + '">' + tt('web_exp_runes_essence', [cost, State.count('rune_essence')]) + '</span>' +
+        '<button class="buybtn' + (lvlOk && has ? '' : ' disabled') + '">' + tt('web_exp_btn_craft') + '</button></span>');
       d.querySelector('button').onclick = () => {
         if (!lvlOk || !has) { SFX.error(); return; }
         State.removeItem('rune_essence', cost);
@@ -777,32 +993,32 @@ const EXPGUI = {
 
   /* ---- Construção ---- */
   rBuild(el) {
-    this.section(el, '🏗️ Construção — móveis e materiais (também no Hub, para melhorar a cidade)');
+    this.section(el, tt('web_exp_build_title'));
     const entries = Object.entries(GameData.recipes.construction);
-    this.rRecipeList(el, 'construction', entries, '🪵 Receitas de construção');
-    el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">💡 Pranchas, pregos e pedra talhada melhoram os prédios da cidade na aba Town do Hub (Oficina do Construtor)</span>'));
+    this.rRecipeList(el, 'construction', entries, tt('web_exp_build_recipes'));
+    el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_build_note') + '</span>'));
   },
 
   /* ---- Comércio (Mercantile) ---- */
   rTrade(el) {
-    this.section(el, '🐎 Posto de Comércio — caravanas em tempo real');
+    this.section(el, tt('web_exp_trade_title'));
     const list = Trade.load();
     if (list.length) {
       for (const c of list) {
         const r = GameData.tradeRoutes[c.key];
         const left = c.returnsAt - Date.now();
-        el.appendChild(this.rowEl('<span class="nm">🐎 ' + (r ? r.display_name : c.key) + ' em viagem</span>' +
-          '<span class="side"><span class="ok">volta em ' + Util.fmtTime(left) + '</span></span>'));
+        el.appendChild(this.rowEl('<span class="nm">' + tt('web_exp_trade_traveling', [r ? r.display_name : c.key]) + '</span>' +
+          '<span class="side"><span class="ok">' + tt('web_exp_trade_back_in', [Util.fmtTime(left)]) + '</span></span>'));
       }
     } else {
-      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Nenhuma caravana em viagem — despache abaixo (90s por viagem)</span>'));
+      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_trade_none') + '</span>'));
     }
     for (const r of GameData.tradeRouteList) {
       const lvlOk = State.level('mercantile') >= r.level_required;
       const can = lvlOk && State.state.coins >= r.coin_cost && list.length < Trade.MAX_CARAVANS;
-      const d = this.rowEl('<span class="nm">🛒 ' + r.display_name + ' <span class="catg">Nv ' + r.level_required + '</span></span>' +
+      const d = this.rowEl('<span class="nm">🛒 ' + r.display_name + ' <span class="catg">' + tt('web_exp_lv', [r.level_required]) + '</span></span>' +
         '<span class="side"><span class="' + (State.state.coins >= r.coin_cost ? 'ok' : 'lock') + '">' + Util.fmt(r.coin_cost) + ' 🪙</span>' +
-        '<button class="buybtn' + (can ? '' : ' disabled') + '">Despachar</button></span>' +
+        '<button class="buybtn' + (can ? '' : ' disabled') + '">' + tt('web_exp_btn_dispatch') + '</button></span>' +
         '<div class="dsc">' + (r.description || '') + '</div>');
       d.querySelector('button').onclick = () => { Trade.dispatch(r.id || r.name || GameData.tradeRouteList.find(x => x === r)?.id); this.renderTab('trade'); };
       el.appendChild(d);
@@ -812,19 +1028,19 @@ const EXPGUI = {
   /* ---- Orações ---- */
   rPray(el) {
     const bless = State.activeBlessing();
-    this.section(el, '🙏 Dispersar ossos e cinzas — Prayer');
+    this.section(el, tt('web_exp_pray_title'));
     if (bless) {
       const left = State.state.church.blessingExpiresAt - Date.now();
-      el.appendChild(this.rowEl('<span class="nm">✨ Bênção ativa: ' + GameData.blessingName(bless) + '</span>' +
+      el.appendChild(this.rowEl('<span class="nm">' + tt('web_exp_pray_active', [GameData.blessingName(bless)]) + '</span>' +
         '<span class="side"><span class="ok">' + bless.type + ' · ' + Util.fmtTime(left) + '</span></span>'));
     } else {
-      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Sem bênção — ative na Igreja do Hub ( ⛪ aba Town )</span>'));
+      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_pray_none') + '</span>'));
     }
     for (const b of EXP.BONES) {
       const have = State.count(b.key);
       if (!have) continue;
       const mk = (label, n) => {
-        const d = this.rowEl('<span class="nm">🦴 ' + b.name + ' <span class="catg">+' + b.xp + ' XP' + (b.ash ? ' (cinza)' : '') + '</span></span>' +
+        const d = this.rowEl('<span class="nm">🦴 ' + b.name + ' <span class="catg">+' + b.xp + ' XP' + (b.ash ? tt('web_exp_pray_ash') : '') + '</span></span>' +
           '<span class="side"><span class="ok">' + have + '×</span><button class="buybtn' + (have >= n ? '' : ' disabled') + '">' + label + '</button></span>');
         d.querySelector('button').onclick = () => {
           const qty = Math.min(n, State.count(b.key));
@@ -837,25 +1053,25 @@ const EXPGUI = {
         };
         return d;
       };
-      el.appendChild(mk('Dispersar', 1));
-      if (have >= 10) { const d10 = mk('×10', 10); d10.querySelector('.nm').style.opacity = 0; d10.querySelector('span.side span').remove(); el.replaceChild(mk('Dispersar ×10', 10), d10); }
-      if (have >= 50) el.appendChild(mk('Dispersar tudo', 9999));
+      el.appendChild(mk(tt('web_exp_btn_scatter'), 1));
+      if (have >= 10) { const d10 = mk('×10', 10); d10.querySelector('.nm').style.opacity = 0; d10.querySelector('span.side span').remove(); el.replaceChild(mk(tt('web_exp_btn_scatter10'), 10), d10); }
+      if (have >= 50) el.appendChild(mk(tt('web_exp_btn_scatter_all'), 9999));
     }
     if (!EXP.BONES.some(b => State.count(b.key) > 0))
-      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Sem ossos/cinzas — mate inimigos ou queime toras</span>'));
+      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_pray_no_bones') + '</span>'));
   },
 
   /* ---- Magias ---- */
   rMagic(el) {
-    this.section(el, '✨ Magias — selecione a ativa (estilo Magia [Q])');
+    this.section(el, tt('web_exp_magic_title'));
     for (const s of EXP.SPELLS) {
       const on = State.state.activeSpell === s.key;
       const lvlOk = State.level('magic') >= s.lvl;
       const runes = State.count(s.rune);
-      const d = this.rowEl('<span class="nm">' + (on ? '★ ' : '') + s.name + ' <span class="catg">Nv ' + s.lvl + '</span></span>' +
-        '<span class="side"><span>Máx ' + s.max + '</span>' +
+      const d = this.rowEl('<span class="nm">' + (on ? '★ ' : '') + s.name + ' <span class="catg">' + tt('web_exp_lv', [s.lvl]) + '</span></span>' +
+        '<span class="side"><span>' + tt('web_exp_magic_max', [s.max]) + '</span>' +
         '<span class="' + (runes >= s.cost ? 'ok' : 'lock') + '">' + s.cost + '× ' + GameData.name(s.rune) + '</span>' +
-        '<button class="buybtn' + (on ? ' equip' : '') + (lvlOk ? '' : ' disabled') + '">' + (on ? 'Ativa' : 'Usar') + '</button></span>');
+        '<button class="buybtn' + (on ? ' equip' : '') + (lvlOk ? '' : ' disabled') + '">' + (on ? tt('web_exp_magic_active') : tt('web_exp_magic_use')) + '</button></span>');
       d.querySelector('button').onclick = () => {
         if (!lvlOk) { SFX.error(); return; }
         State.state.activeSpell = s.key; SFX.buy(); State.save();
@@ -867,26 +1083,26 @@ const EXPGUI = {
 
   /* ---- Plantação ---- */
   rFarm(el) {
-    this.section(el, '🌾 Canteiros — em tempo real (também no mundo, ao sul da cidade)');
+    this.section(el, tt('web_exp_farm_title'));
     const n = State.patchCount();
     for (let i = 1; i <= 5; i++) {
       const patch = State.state.farmingPatches[i - 1];
-      if (i > n) { el.appendChild(this.rowEl('<span class="nm">🔒 Canteiro ' + i + '</span><span class="side"><span class="lock">Agricultura ' + (i === 4 ? 20 : 40) + '</span></span>')); continue; }
+      if (i > n) { el.appendChild(this.rowEl('<span class="nm">' + tt('web_exp_farm_patch', [i]) + '</span><span class="side"><span class="lock">' + tt('web_exp_farm_req', [i === 4 ? 20 : 40]) + '</span></span>')); continue; }
       if (!patch) {
-        el.appendChild(this.rowEl('<span class="nm">▫️ Canteiro ' + i + ' vazio</span><span class="side"><span class="ok">plante abaixo</span></span>'));
+        el.appendChild(this.rowEl('<span class="nm">' + tt('web_exp_farm_empty', [i]) + '</span><span class="side"><span class="ok">' + tt('web_exp_farm_plant_below') + '</span></span>'));
         continue;
       }
       const crop = GameData.crops[patch.crop];
       if (Systems.cropReady(patch)) {
-        const d = this.rowEl('<span class="nm">🌾 ' + crop.display_name + ' pronto!</span><span class="side"><button class="buybtn equip">Colher</button></span>');
+        const d = this.rowEl('<span class="nm">' + tt('web_exp_farm_ready', [crop.display_name]) + '</span><span class="side"><button class="buybtn equip">' + tt('web_exp_btn_harvest') + '</button></span>');
         d.querySelector('button').onclick = () => { this.harvest(i); this.renderTab('farm'); };
         el.appendChild(d);
       } else {
-        el.appendChild(this.rowEl('<span class="nm">🌱 ' + crop.display_name + ' (' + (patch.fert ? 'com cinza' : 'sem cinza') + ')</span><span class="side"><span>' + Util.fmtTime(Systems.patchTimeLeftMs(patch)) + '</span></span>'));
+        el.appendChild(this.rowEl('<span class="nm">🌱 ' + crop.display_name + ' (' + (patch.fert ? tt('web_exp_farm_with_ash') : tt('web_exp_farm_without_ash')) + ')</span><span class="side"><span>' + Util.fmtTime(Systems.patchTimeLeftMs(patch)) + '</span></span>'));
       }
     }
     // semear
-    this.section(el, 'Semear (sementes no inventário)');
+    this.section(el, tt('web_exp_farm_sow'));
     let any = false;
     const emptyIdx = (() => { for (let i = 0; i < n; i++) if (!State.state.farmingPatches[i]) return i; return -1; })();
     for (const [cropId, crop] of Object.entries(GameData.crops)) {
@@ -896,61 +1112,61 @@ const EXPGUI = {
       any = true;
       const lvlOk = State.level('farming') >= (crop.farming_level_required || 1);
       const hasAsh = Object.keys(Systems.ASH_YIELD).some(k => State.count(k) > 0);
-      const d = this.rowEl('<span class="nm">' + (crop.emoji || '🌱') + ' ' + crop.display_name + ' <span class="catg">Nv ' + (crop.farming_level_required || 1) + ' · ' + crop.growth_time_hours + 'h</span></span>' +
-        '<span class="side"><span class="ok">' + have + '× sementes</span>' +
-        (emptyIdx >= 0 ? '<button class="buybtn' + (lvlOk ? '' : ' disabled') + '">Plantar</button>' +
-          (hasAsh ? '<button class="buybtn equip' + (lvlOk ? '' : ' disabled') + '">+ Cinzas</button>' : '') : '<span class="lock">sem canteiro livre</span>') +
+      const d = this.rowEl('<span class="nm">' + (crop.emoji || '🌱') + ' ' + crop.display_name + ' <span class="catg">' + tt('web_exp_lv', [crop.farming_level_required || 1]) + ' · ' + crop.growth_time_hours + 'h</span></span>' +
+        '<span class="side"><span class="ok">' + tt('web_exp_farm_seeds', [have]) + '</span>' +
+        (emptyIdx >= 0 ? '<button class="buybtn' + (lvlOk ? '' : ' disabled') + '">' + tt('web_exp_btn_plant') + '</button>' +
+          (hasAsh ? '<button class="buybtn equip' + (lvlOk ? '' : ' disabled') + '">' + tt('web_exp_btn_plant_ash') + '</button>' : '') : '<span class="lock">' + tt('web_exp_farm_no_patch') + '</span>') +
         '</span>');
       const btns = d.querySelectorAll('button');
       if (btns[0]) btns[0].onclick = () => this.plant(emptyIdx + 1, cropId, false);
       if (btns[1]) btns[1].onclick = () => this.plant(emptyIdx + 1, cropId, true);
       el.appendChild(d);
     }
-    if (!any) el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Sem sementes — compre na Loja 🛒 ou furte camponeses</span>'));
+    if (!any) el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_farm_no_seeds') + '</span>'));
   },
   plant(patchNumber, cropId, useAsh) {
     const r = Systems.plantCrop(patchNumber, cropId, useAsh);
     if (r.error) { this.toast(r.error); SFX.error(); return; }
-    this.toast('🌱 Plantado!'); SFX.buy(); this.renderTab('farm');
+    this.toast(tt('web_exp_toast_planted')); SFX.buy(); this.renderTab('farm');
   },
 
   /* ---- Slayer ---- */
   rSlayer(el) {
-    this.section(el, '🗡️ Mestre Slayer — pontos: ' + (State.state.slayer?.points || 0));
+    this.section(el, tt('web_exp_slayer_title', [State.state.slayer?.points || 0]));
     const task = State.state.slayer?.activeTask;
     if (task) {
       const e = GameData.enemies[task.enemyKey];
-      el.appendChild(this.rowEl('<span class="nm">⚔️ Tarefa: ' + task.targetKills + '× ' + (e ? e.display_name : task.enemyKey) +
+      el.appendChild(this.rowEl('<span class="nm">' + tt('web_exp_slayer_task', [task.targetKills, e ? e.display_name : task.enemyKey]) +
         '</span><span class="side"><span class="ok">' + task.killsCompleted + '/' + task.targetKills + '</span>' +
-        '<span>+' + task.xpPerKill + ' XP/abate</span><span>' + task.taskPoints + ' pts</span></span>'));
-      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Inimigos da tarefa aparecem no mundo e nas dungeons</span>'));
+        '<span>' + tt('web_exp_slayer_xp', [task.xpPerKill]) + '</span><span>' + tt('web_exp_slayer_pts', [task.taskPoints]) + '</span></span>'));
+      el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_slayer_note') + '</span>'));
     } else {
-      const d = this.rowEl('<span class="nm">⚔️ Nova tarefa</span><span class="side"><button class="buybtn">Aceitar</button></span>');
+      const d = this.rowEl('<span class="nm">' + tt('web_exp_slayer_new') + '</span><span class="side"><button class="buybtn">' + tt('web_exp_btn_accept') + '</button></span>');
       d.querySelector('button').onclick = () => {
         const r = Systems.assignTask();
         if (r.error) { this.toast(r.error); SFX.error(); } else { SFX.buy(); this.renderTab('slayer'); }
       };
       el.appendChild(d);
     }
-    const d2 = this.rowEl('<span class="nm">🔮 Prever próxima (ossos)</span><span class="side"><button class="buybtn">Prever</button></span>');
+    const d2 = this.rowEl('<span class="nm">' + tt('web_exp_slayer_foretell') + '</span><span class="side"><button class="buybtn">' + tt('web_exp_btn_foretell') + '</button></span>');
     d2.querySelector('button').onclick = () => {
       const r = Systems.foretelTask();
       if (r.error) { this.toast(r.error); SFX.error(); } else { SFX.buy(); this.renderTab('slayer'); }
     };
     el.appendChild(d2);
-    const d3 = this.rowEl('<span class="nm">⏭️ Abandonar tarefa (' + Systems.SLAYER_SKIP_COST + ' pts)</span><span class="side"><button class="buybtn">Abandonar</button></span>');
+    const d3 = this.rowEl('<span class="nm">' + tt('web_exp_slayer_skip', [Systems.SLAYER_SKIP_COST]) + '</span><span class="side"><button class="buybtn">' + tt('web_exp_btn_skip') + '</button></span>');
     d3.querySelector('button').onclick = () => {
       const r = Systems.skipTask();
       if (r.error) { this.toast(r.error); SFX.error(); } else { this.renderTab('slayer'); }
     };
     el.appendChild(d3);
     // loja de pontos
-    this.section(el, 'Loja de pontos Slayer');
+    this.section(el, tt('web_exp_slayer_shop'));
     for (const entry of (Systems.SLAYER_SHOP || [])) {
       const can = (State.state.slayer?.points || 0) >= entry.cost;
-      const name = entry.xp ? ('Lâmpada de XP (' + Util.fmt(entry.xp) + ')' ) : GameData.name(entry.key);
-      const d = this.rowEl('<span class="nm">🏅 ' + name + '</span><span class="side"><span>' + entry.cost + ' pts</span>' +
-        '<button class="buybtn' + (can ? '' : ' disabled') + '">Comprar</button></span>');
+      const name = entry.xp ? tt('web_exp_slayer_lamp', [Util.fmt(entry.xp)]) : GameData.name(entry.key);
+      const d = this.rowEl('<span class="nm">🏅 ' + name + '</span><span class="side"><span>' + tt('web_exp_slayer_pts', [entry.cost]) + '</span>' +
+        '<button class="buybtn' + (can ? '' : ' disabled') + '">' + tt('web_exp_btn_buy') + '</button></span>');
       d.querySelector('button').onclick = () => {
         const skill = entry.xp ? State.state.combatStyle : null;
         const r = Systems.buySlayerItem(entry.key, skill);
@@ -962,7 +1178,7 @@ const EXPGUI = {
 
   /* ---- Loja ---- */
   rShop(el) {
-    this.section(el, '🛒 Comprar — moedas: ' + Util.fmt(State.state.coins));
+    this.section(el, tt('web_exp_shop_title', [Util.fmt(State.state.coins)]));
     for (const [catKey, cat] of Object.entries(GameData.marketplace)) {
       this.section(el, cat.category_name || catKey);
       for (const [key, item] of Object.entries(cat.items).slice(0, 40)) {
@@ -982,28 +1198,28 @@ const EXPGUI = {
       }
     }
     // boost de XP
-    this.section(el, '⚡ Extras');
+    this.section(el, tt('web_exp_shop_extras'));
     const boost = Engine.XP_BOOST;
-    const d = this.rowEl('<span class="nm">⚡ Boost 2× XP por 48h</span><span class="side"><span class="' + (State.state.coins >= boost.price ? 'ok' : 'lock') + '">' + Util.fmt(boost.price) + ' 🪙</span>' +
-      (State.xpBoostActive() ? '<span class="ok">ativo</span>' : '<button class="buybtn">Ativar</button>') + '</span>');
+    const d = this.rowEl('<span class="nm">' + tt('web_exp_shop_boost') + '</span><span class="side"><span class="' + (State.state.coins >= boost.price ? 'ok' : 'lock') + '">' + Util.fmt(boost.price) + ' 🪙</span>' +
+      (State.xpBoostActive() ? '<span class="ok">' + tt('web_exp_shop_boost_active') + '</span>' : '<button class="buybtn">' + tt('web_exp_btn_activate') + '</button>') + '</span>');
     const bbtn = d.querySelector('button');
     if (bbtn) bbtn.onclick = () => {
       const r = Engine.buyXpBoost();
-      if (r.error) { this.toast(r.error); SFX.error(); } else { this.toast('⚡ 2× XP ativado!'); SFX.levelup(); }
+      if (r.error) { this.toast(r.error); SFX.error(); } else { this.toast(tt('web_exp_toast_xp_boost')); SFX.levelup(); }
       this.renderTab('shop');
     };
     el.appendChild(d);
     // vender
-    this.section(el, '💰 Vender (equipped não aparece)');
+    this.section(el, tt('web_exp_shop_sell'));
     const sellable = Object.entries(State.state.inventory)
       .filter(([k, v]) => !Object.values(State.state.equipped).includes(k))
       .sort((a, b) => Engine.sellPrice(b[0]) * b[1] - Engine.sellPrice(a[0]) * a[1]);
-    if (!sellable.length) el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">Nada para vender</span>'));
+    if (!sellable.length) el.appendChild(this.rowEl('<span class="nm" style="color:var(--muted)">' + tt('web_exp_shop_nothing') + '</span>'));
     for (const [key, qty] of sellable.slice(0, 40)) {
       const price = Engine.sellPrice(key);
       const d = this.rowEl('<span class="nm">' + GameData.name(key) + ' ×' + qty + '</span>' +
-        '<span class="side"><span class="ok">' + price + ' 🪙/un</span>' +
-        '<button class="buybtn" data-q="1">Vender 1</button><button class="buybtn" data-q="all">Tudo</button></span>');
+        '<span class="side"><span class="ok">' + tt('web_exp_shop_per_unit', [price]) + '</span>' +
+        '<button class="buybtn" data-q="1">' + tt('web_exp_btn_sell1') + '</button><button class="buybtn" data-q="all">' + tt('web_exp_btn_sell_all') + '</button></span>');
       d.querySelectorAll('button').forEach(btn => btn.onclick = () => {
         const r = Engine.sell(key, btn.dataset.q === 'all' ? qty : 1);
         if (r.error) { this.toast(r.error); SFX.error(); } else { SFX.gold(); }
@@ -1015,32 +1231,32 @@ const EXPGUI = {
 
   /* ---- Codex ---- */
   rCodex(el) {
-    this.section(el, '🏰 Dungeons (' + Object.keys(GameData.dungeons).length + ') — entre pelos portais no mundo');
+    this.section(el, tt('web_exp_codex_dungeons', [Object.keys(GameData.dungeons).length]));
     for (const d of GameData.dungeonList()) {
       const unlocked = State.dungeonUnlocked(d.name);
       const runs = State.state.stats.dungeonRuns?.[d.name] || 0;
       const pool = (d.enemy_spawns || []).map(s => GameData.enemies[s.enemy]?.display_name || s.enemy).slice(0, 4).join(', ');
       const el2 = this.rowEl('<span class="nm">' + (unlocked ? '🏰' : '🔒') + ' ' + d.display_name +
-        ' <span class="catg">Nv ' + (d.recommended_level || 1) + (d.safe_zone ? ' · segura' : '') + '</span></span>' +
-        '<span class="side"><span class="' + (unlocked ? 'ok' : 'lock') + '">' + (unlocked ? runs + ' runs' : 'selada') + '</span></span>' +
+        ' <span class="catg">' + tt('web_exp_lv', [d.recommended_level || 1]) + (d.safe_zone ? tt('web_exp_codex_safe') : '') + '</span></span>' +
+        '<span class="side"><span class="' + (unlocked ? 'ok' : 'lock') + '">' + (unlocked ? tt('web_exp_codex_runs', [runs]) : tt('web_exp_codex_sealed')) + '</span></span>' +
         '<div class="dsc">' + (d.description || '') + '<br><i>' + pool + '</i></div>');
       el.appendChild(el2);
     }
-    this.section(el, '🐉 Bosses de raid — desafie por aqui');
+    this.section(el, tt('web_exp_codex_raids'));
     for (const r of EXP.RAIDS) {
       const kills = State.state.stats.bossKillsByBoss?.[r.key] || 0;
       const ok = EXP.combatLevel() >= r.combat_level_required - 10;
-      const d = this.rowEl('<span class="nm">' + (r.emoji || '🐉') + ' ' + r.display_name + ' <span class="catg">Combate ' + r.combat_level_required + '+</span></span>' +
-        '<span class="side"><span>' + r.hp + ' HP</span><span>' + kills + ' abates</span>' +
-        '<button class="buybtn' + (ok ? '' : ' disabled') + '">Desafiar</button></span>' +
+      const d = this.rowEl('<span class="nm">' + (r.emoji || '🐉') + ' ' + r.display_name + ' <span class="catg">' + tt('web_exp_codex_combat_req', [r.combat_level_required]) + '</span></span>' +
+        '<span class="side"><span>' + tt('web_exp_codex_hp', [r.hp]) + '</span><span>' + tt('web_exp_codex_kills', [kills]) + '</span>' +
+        '<button class="buybtn' + (ok ? '' : ' disabled') + '">' + tt('web_exp_btn_challenge') + '</button></span>' +
         '<div class="dsc">' + (r.description || '') + '</div>');
       d.querySelector('button').onclick = () => Dungeons.challenge(r.key);
       el.appendChild(d);
     }
-    this.section(el, '🗡️ Bestiário (' + Object.keys(GameData.enemies).length + ')');
+    this.section(el, tt('web_exp_codex_bestiary', [Object.keys(GameData.enemies).length]));
     for (const [key, e] of Object.entries(GameData.enemies)) {
       const kills = State.state.stats.killsByEnemy?.[key] || 0;
-      el.appendChild(this.rowEl('<span class="nm">🗡️ ' + e.display_name + '</span><span class="side"><span>' + e.hp + ' HP</span><span>' + (e.xp_drops?.combat || 0) + ' XP</span><span>' + kills + ' abates</span></span>'));
+      el.appendChild(this.rowEl('<span class="nm">🗡️ ' + e.display_name + '</span><span class="side"><span>' + tt('web_exp_codex_hp', [e.hp]) + '</span><span>' + tt('web_exp_codex_xp', [e.xp_drops?.combat || 0]) + '</span><span>' + tt('web_exp_codex_kills', [kills]) + '</span></span>'));
     }
   },
 
@@ -1070,6 +1286,8 @@ const EXPGUI = {
     if (this.state !== 'menu') this.render();
     // HUD ~10x/s, autosave 8s
     if (now - this._lastHud > 100 && this.state === 'playing') { this._lastHud = now; this.updateHUD(); }
+    // fila do Queue Master: auto-avanço ~1x/s (mesma regra do Hub)
+    if (now - this._lastQueueTick > 1000) { this._lastQueueTick = now; this.queueTick(); }
     this._saveT += dt;
     if (this._saveT > 8000 && this.state === 'playing') { this._saveT = 0; State.save(); this.savePos(); }
   },
@@ -1106,7 +1324,7 @@ const EXPGUI = {
     } else {
       // saída da dungeon
       this.drawSprite(ctx, this.portalSpr, TILE / 2 + 6, TILE / 2 + 6, ox, oy, 1);
-      const t = '🚪 SAÍDA';
+      const t = tt('web_exp_interact_dungeon_exit', ['']).replace(/\s*—\s*$/, '');
       ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
       ctx.fillStyle = '#ffd97a'; ctx.fillText(t, TILE / 2 + 6 - ox, TILE / 2 - 26 - oy);
     }
@@ -1275,10 +1493,10 @@ const EXPGUI = {
       ctx.fillStyle = '#ffd97a';
       ctx.fillText(label, x + w / 2, y - 8);
     };
-    put(this.shopSpr, World.BUILDINGS[0].x, World.BUILDINGS[0].y, 4, 3, '🛒 Loja [E]');
-    put(this.churchSpr, World.BUILDINGS[1].x, World.BUILDINGS[1].y, 4, 3, '⛪ Igreja [E]');
-    put(this.workshopSpr, World.BUILDINGS[2].x, World.BUILDINGS[2].y, 3, 3, '🏗️ Construção [E]');
-    put(this.tradeSpr, World.BUILDINGS[3].x, World.BUILDINGS[3].y, 3, 3, '🐎 Comércio [E]');
+    put(this.shopSpr, World.BUILDINGS[0].x, World.BUILDINGS[0].y, 4, 3, tt('web_exp_town_label_shop'));
+    put(this.churchSpr, World.BUILDINGS[1].x, World.BUILDINGS[1].y, 4, 3, tt('web_exp_town_label_church'));
+    put(this.workshopSpr, World.BUILDINGS[2].x, World.BUILDINGS[2].y, 3, 3, tt('web_exp_town_label_workshop'));
+    put(this.tradeSpr, World.BUILDINGS[3].x, World.BUILDINGS[3].y, 3, 3, tt('web_exp_town_label_trade'));
 
     // poço central
     const wx = World.WELL.x * TILE - ox, wy = World.WELL.y * TILE - oy;
@@ -1331,7 +1549,7 @@ const EXPGUI = {
       ctx.font = '22px serif'; ctx.textAlign = 'center';
       ctx.fillText('🗡️', smx, smy + 8);
       ctx.font = 'bold 11px "Courier New"'; ctx.fillStyle = '#ffd97a';
-      ctx.fillText('Mestre Slayer [E]', smx, smy - 16);
+      ctx.fillText(tt('web_exp_town_label_slayer'), smx, smy - 16);
     }
     // portal
     this.drawSprite(ctx, this.portalSpr, World.PORTAL.x * TILE + 16, World.PORTAL.y * TILE + 16, ox, oy, 0.9 + 0.1 * Math.sin(World.time * 3));
@@ -1393,7 +1611,7 @@ const EXPGUI = {
       if (sx > -100 && sx < this.screenW + 100 && sy > -100 && sy < this.screenH + 100) {
         ctx.font = 'bold 10px "Courier New"'; ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(0,0,0,.6)';
-        const label = '🤸 ' + course.def.display_name + ' [E]';
+        const label = '🤸 ' + course.def.display_name + ' [E]'; // nome do curso vem dos dados
         const w = ctx.measureText(label).width + 10;
         ctx.fillRect(sx - w / 2, sy - 34, w, 15);
         ctx.fillStyle = '#8fd8ff'; ctx.fillText(label, sx, sy - 23);
@@ -1411,7 +1629,7 @@ const EXPGUI = {
       const dist = Math.hypot(World.player.x - g.x, World.player.y - g.y);
       if (dist < 170) {
         ctx.font = 'bold 12px "Courier New"'; ctx.textAlign = 'center';
-        const label = (unlocked ? '' : '🔒 ') + d.display_name + ' · Nv ' + (d.recommended_level || 1);
+        const label = (unlocked ? '' : '🔒 ') + d.display_name + ' · ' + tt('web_exp_map_lv', [d.recommended_level || 1]);
         ctx.fillStyle = 'rgba(0,0,0,.65)';
         const w = ctx.measureText(label).width + 12;
         ctx.fillRect(x - w / 2, y - 58, w, 17);

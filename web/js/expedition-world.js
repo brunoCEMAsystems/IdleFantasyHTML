@@ -49,11 +49,12 @@ const World = {
   },
 
   // ---- cidade: edifícios sólidos (retângulos em tiles) ----
+  // `name` é o rótulo localizado em tempo real; `nameEn` é o fallback inglês.
   BUILDINGS: [
-    { key: 'shop', x: -8, y: -7, w: 4, h: 3, icon: '🛒', name: 'Loja Geral' },
-    { key: 'church', x: 4, y: -7, w: 4, h: 3, icon: '⛪', name: 'Igreja' },
-    { key: 'workshop', x: -8, y: 2, w: 3, h: 3, icon: '🏗️', name: 'Oficina (Hub)' },
-    { key: 'trade', x: 3, y: 2, w: 3, h: 3, icon: '🐎', name: 'Posto de Comércio' },
+    { key: 'shop', x: -8, y: -7, w: 4, h: 3, icon: '🛒', nameEn: 'General Store' },
+    { key: 'church', x: 4, y: -7, w: 4, h: 3, icon: '⛪', nameEn: 'Church' },
+    { key: 'workshop', x: -8, y: 2, w: 3, h: 3, icon: '🏗️', nameEn: 'Workshop (Hub)' },
+    { key: 'trade', x: 3, y: 2, w: 3, h: 3, icon: '🐎', nameEn: 'Trade Post' },
   ],
   WELL: { x: 0, y: -2 },                                // poço central (sólido)
   LAMPS: [{ x: -4, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 4 }, { x: -3, y: -5 }, { x: 3, y: -5 }],
@@ -237,6 +238,18 @@ const World = {
       if (d < bd) { bd = d; best = g; }
     }
     return best;
+  },
+
+  /** Célula segura (não-sólida) perto de (tx,ty) para a viagem rápida — prefere o lado da cidade. */
+  spotNear(tx, ty) {
+    const len = Math.hypot(tx, ty) || 1;
+    const dirx = -tx / len, diry = -ty / len;
+    const cands = [];
+    for (const d of [3.5, 4.5, 3, 5.5, 6.5]) cands.push([Math.round(tx + dirx * d), Math.round(ty + diry * d)]);
+    for (const [ox, oy] of [[3, 0], [-3, 0], [0, 3], [0, -3], [4, 2], [4, -2], [-4, 2], [-4, -2], [5, 0], [-5, 0], [0, 5], [0, -5]])
+      cands.push([tx + ox, ty + oy]);
+    for (const [cx, cy] of cands) if (!this.solidTile(cx, cy)) return { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
+    return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
   },
 
   /* ---------------- entidades ---------------- */
@@ -453,9 +466,9 @@ const Combat = {
     const p = World.player;
     const weaponKey = State.equippedItem('weapon');
     const weapon = weaponKey ? GameData.equipment[weaponKey] : null;
-    if (!weapon || weapon.combat_style !== 'ranged') { EXPGUI.toast('Equipe um arco! (Fletching/Loja)'); SFX.error(); return; }
+    if (!weapon || weapon.combat_style !== 'ranged') { EXPGUI.toast(tt('web_exp_toast_equip_bow')); SFX.error(); return; }
     const arrow = EXP.bestArrow();
-    if (!arrow) { EXPGUI.toast('Sem flechas! (Fletching/Loja)'); SFX.error(); return; }
+    if (!arrow) { EXPGUI.toast(tt('web_exp_toast_no_arrows')); SFX.error(); return; }
     const ctx = EXP.ctx();
     p.attackCd = EXP.attackIntervalSec(ctx); p.attackTimer = 0.22;
     State.removeItem(arrow.key, 1);
@@ -469,14 +482,14 @@ const Combat = {
     const p = World.player;
     const spellKey = State.state.activeSpell;
     const spell = spellKey ? GameData.spells[spellKey] : null;
-    if (!spell) { EXPGUI.toast('Selecione uma magia no Diário [B]'); SFX.error(); return; }
-    if (State.level('magic') < spell.magic_level_required) { EXPGUI.toast('Requer Magia ' + spell.magic_level_required); SFX.error(); return; }
+    if (!spell) { EXPGUI.toast(tt('web_exp_toast_select_spell')); SFX.error(); return; }
+    if (State.level('magic') < spell.magic_level_required) { EXPGUI.toast(tt('web_exp_toast_need_magic', [spell.magic_level_required])); SFX.error(); return; }
     const ctx = EXP.ctx();
     const weaponKey = State.equippedItem('weapon');
     const infinite = (ctx.infiniteRunes && ctx.infiniteRunes === spell.rune_type) ||
       (weaponKey && GameData.equipment[weaponKey]?.infinite_runes === spell.rune_type);
     if (!infinite && State.count(spell.rune_type) < spell.rune_cost) {
-      EXPGUI.toast('Sem ' + GameData.name(spell.rune_type) + 's!'); SFX.error(); return;
+      EXPGUI.toast(tt('web_exp_toast_no_runes', [GameData.name(spell.rune_type)])); SFX.error(); return;
     }
     p.attackCd = EXP.attackIntervalSec(ctx); p.attackTimer = 0.22;
     if (!infinite) State.removeItem(spell.rune_type, spell.rune_cost);
@@ -582,7 +595,7 @@ const Combat = {
     if (typeof Systems !== 'undefined' && Systems.recordKills) {
       const res = Systems.recordKills({ [e.key]: 1 });
       if (res.xp > 0) XPGain.apply('slayer', res.xp);
-      if (res.tasksCompleted > 0) EXPGUI.toast('✅ Tarefa Slayer concluída! +' + (res.taskPoints || 0) + ' pts');
+      if (res.tasksCompleted > 0) EXPGUI.toast(tt('web_exp_toast_slayer_done', [res.taskPoints || 0]));
       Systems.recordGuildCombat?.({ [e.key]: 1 }, State.state.combatStyle);
     }
     // quests/stats do Hub
@@ -594,7 +607,7 @@ const Combat = {
     const def = e.def; // raid boss real
     World.spawnParticles(e.x, e.y, '#f6c453', 26, 180);
     SFX.levelup();
-    EXPGUI.toast('🐉 ' + e.name + ' derrotado!');
+    EXPGUI.toast(tt('web_exp_toast_boss_defeated', [e.name]));
     if (def.xp_rewards) {
       for (const [skill, xp] of Object.entries(def.xp_rewards)) {
         if (State.state.skills[skill]) XPGain.apply(skill, xp);
@@ -639,7 +652,7 @@ const Combat = {
           const off = EXP.enemyOffense(e.def, ctx);
           const dmg = Math.random() < off.chance ? Util.randInt(0, off.maxHit) : 0;
           if (dmg > 0) Player.hurt(dmg, e.x, e.y);
-          else World.spawnFloat(p.x, p.y - 26, 'errou', '#9aa4bd');
+          else World.spawnFloat(p.x, p.y - 26, tt('web_exp_float_miss'), '#9aa4bd');
         }
       }
     }
@@ -659,7 +672,7 @@ const Combat = {
           const ctx = EXP.ctx();
           const off = EXP.enemyOffense(e.def, ctx);
           const dmg = Math.random() < off.chance ? Util.randInt(0, off.maxHit) : 0;
-          if (dmg > 0) Player.hurt(dmg, e.x, e.y); else World.spawnFloat(p.x, p.y - 26, 'errou', '#9aa4bd');
+          if (dmg > 0) Player.hurt(dmg, e.x, e.y); else World.spawnFloat(p.x, p.y - 26, tt('web_exp_float_miss'), '#9aa4bd');
         }
       }
       if (d > 1400) World.bosses.splice(i, 1);
@@ -677,14 +690,14 @@ const Gathering = {
     const p = World.player;
     if (res.kind === 'tree') {
       const tree = EXP.TREES[res.id];
-      if (State.level('woodcutting') < tree.lvl) { EXPGUI.toast('Requer Corte de Madeira ' + tree.lvl); SFX.error(); return; }
+      if (State.level('woodcutting') < tree.lvl) { EXPGUI.toast(tt('web_exp_toast_need_woodcutting', [tree.lvl])); SFX.error(); return; }
       res.hp -= 1; res.hitT = 0.12; SFX.chop();
       World.spawnParticles(res.x, res.y, '#55a23f', 3, 60);
       if (res.hp <= 0) this.depleteNode(key, res, 'woodcutting', tree);
     } else {
       const isEssence = res.id === 'essence';
       const ore = isEssence ? { key: 'rune_essence', lvl: 1, xp: GameData.ores.rune_essence.xp_per_ore, name: GameData.ores.rune_essence.display_name } : EXP.ORES[res.id];
-      if (State.level('mining') < ore.lvl) { EXPGUI.toast('Requer Mineração ' + ore.lvl); SFX.error(); return; }
+      if (State.level('mining') < ore.lvl) { EXPGUI.toast(tt('web_exp_toast_need_mining', [ore.lvl])); SFX.error(); return; }
       res.hp -= 1; res.hitT = 0.12; SFX.mine();
       World.spawnParticles(res.x, res.y, EXP.ORE_COLORS[ore.key] || '#8b97a3', 3, 60);
       if (res.hp <= 0) this.depleteNode(key, res, 'mining', ore, !isEssence);
@@ -733,7 +746,7 @@ const Gathering = {
     SFX.fish();
     const lvl = State.level('fishing');
     const avail = EXP.FISH.filter(f => lvl >= f.lvl);
-    if (!avail.length) { EXPGUI.toast('Nenhum peixe disponível'); return true; }
+    if (!avail.length) { EXPGUI.toast(tt('web_exp_toast_no_fish')); return true; }
     const pick = avail[Math.floor(Math.random() * Math.min(avail.length, 4))];
     const eff = State.toolEfficiency('fishing_rod', 'fishing', pick.lvl);
     const cape = 1 + State.capeBonus('fishing');
@@ -759,13 +772,13 @@ const Thieving = {
     const p = World.player;
     if (p.stun > 0 || npc.cd > 0) return;
     const def = npc.def;
-    if (State.level('thieving') < def.level_required) { EXPGUI.toast('Requer Roubo ' + def.level_required); SFX.error(); return; }
+    if (State.level('thieving') < def.level_required) { EXPGUI.toast(tt('web_exp_toast_need_thieving', [def.level_required])); SFX.error(); return; }
     npc.cd = 1.6;
     const chance = XU.clamp(0.40 + (State.level('thieving') - def.level_required) * 0.02, 0.10, 0.95);
     if (Math.random() >= chance) {
       p.stun = 1.2;
-      World.spawnFloat(npc.x, npc.y - 20, 'Pego!', '#e05252');
-      EXPGUI.toast('😬 ' + npc.name + ' te pegou roubando!');
+      World.spawnFloat(npc.x, npc.y - 20, tt('web_exp_float_caught'), '#e05252');
+      EXPGUI.toast(tt('web_exp_toast_caught', [npc.name]));
       SFX.error();
       return;
     }
@@ -822,7 +835,7 @@ const Agility = {
     const chance = Math.min(0.95, 0.80 + (State.level('agility') - course.def.level_required) * 0.02);
     if (Math.random() >= chance) {
       p.stun = 1.2;
-      EXPGUI.toast('💨 ' + course.def.display_name + ' — você tropeçou!');
+      EXPGUI.toast(tt('web_exp_toast_stumbled', [course.def.display_name]));
       SFX.error();
       return;
     }
@@ -835,7 +848,7 @@ const Agility = {
     const dx = ob.x - p.x, dy = ob.y - p.y, m = Math.hypot(dx, dy) || 1;
     const nx = p.x + dx / m * 52, ny = p.y + dy / m * 52;
     if (!World.collidesRect(nx - 7, ny - 15, 14, 15)) { p.x = nx; p.y = ny; }
-    World.spawnFloat(ob.x, ob.y - 18, '+' + course.def.xp_per_success + ' Agi', '#8fd8ff');
+    World.spawnFloat(ob.x, ob.y - 18, tt('web_exp_float_agi', [course.def.xp_per_success]), '#8fd8ff');
     World.spawnParticles(ob.x, ob.y, '#8fd8ff', 5, 70);
     SFX.pickup();
   },
@@ -858,15 +871,15 @@ const Trade = {
   dispatch(routeKey) {
     const r = GameData.tradeRoutes[routeKey];
     if (!r) return;
-    if (State.level('mercantile') < r.level_required) { EXPGUI.toast('Requer Mercantil ' + r.level_required); SFX.error(); return; }
+    if (State.level('mercantile') < r.level_required) { EXPGUI.toast(tt('web_exp_toast_need_mercantile', [r.level_required])); SFX.error(); return; }
     const list = this.load();
-    if (list.length >= this.MAX_CARAVANS) { EXPGUI.toast('Máximo de ' + this.MAX_CARAVANS + ' caravanas simultâneas'); SFX.error(); return; }
-    if (State.state.coins < r.coin_cost) { EXPGUI.toast('Moedas insuficientes (' + Util.fmt(r.coin_cost) + ' 🪙)'); SFX.error(); return; }
+    if (list.length >= this.MAX_CARAVANS) { EXPGUI.toast(tt('web_exp_toast_max_caravans', [this.MAX_CARAVANS])); SFX.error(); return; }
+    if (State.state.coins < r.coin_cost) { EXPGUI.toast(tt('web_exp_toast_not_enough_coins', [Util.fmt(r.coin_cost)])); SFX.error(); return; }
     State.state.coins -= r.coin_cost;
     list.push({ key: routeKey, returnsAt: Date.now() + this.TRIP_MS, cost: r.coin_cost });
     this.save(list);
     State.save();
-    EXPGUI.toast('🐎 Caravana despachada: ' + r.display_name + ' (90s)');
+    EXPGUI.toast(tt('web_exp_toast_caravan_sent', [r.display_name]));
     SFX.portal();
     EXPGUI.refreshOpenTab?.('trade');
   },
@@ -889,7 +902,7 @@ const Trade = {
         State.addItem('coins', coins);
         QuestFeed.gather('mercantile', { coins });
         Systems.recordGuildTrade?.(c.key, coins);
-        EXPGUI.toast('🐎 ' + r.display_name + ' voltou: +' + Util.fmt(coins) + ' 🪙');
+        EXPGUI.toast(tt('web_exp_toast_caravan_back', [r.display_name, Util.fmt(coins)]));
         if (World.player) World.spawnFloat(World.player.x, World.player.y - 30, '+' + Util.fmt(coins) + ' 🪙', '#f6c453');
         SFX.gold();
       }
@@ -907,7 +920,7 @@ const Dungeons = {
     const d = GameData.dungeons[gate.key];
     if (!d) return;
     if (!State.dungeonUnlocked(gate.key)) {
-      EXPGUI.toast('🔒 ' + d.display_name + ' está selada — encontre as notas de expedição no Hub!');
+      EXPGUI.toast(tt('web_exp_toast_dungeon_sealed', [d.display_name]));
       SFX.error(); return;
     }
     World.mode = 'dungeon'; World.dungeonKey = gate.key;
@@ -916,7 +929,7 @@ const Dungeons = {
     World.enemies = []; World.projectiles = []; World.bosses = [];
     const p = World.player; p.x = TILE / 2 + 6; p.y = TILE / 2 + 6; p.facing = 'down';
     World.camera.x = p.x; World.camera.y = p.y;
-    EXPGUI.toast('🏰 ' + d.display_name + ' — nível recomendado ' + (d.recommended_level || 1));
+    EXPGUI.toast(tt('web_exp_toast_dungeon_enter', [d.display_name, d.recommended_level || 1]));
     EXPGUI.flash('lvflash');
     SFX.portal();
     EXPGUI.updateBanner();
@@ -931,12 +944,12 @@ const Dungeons = {
       for (const rare of (d.rare_drops || []))
         if (Math.random() < rare.chance) {
           State.addItem(rare.item, 1); got = rare.item;
-          EXPGUI.toast('🎁 Raro: ' + GameData.name(rare.item) + '!');
+          EXPGUI.toast(tt('web_exp_toast_rare', [GameData.name(rare.item)]));
         }
-      EXPGUI.toast('🏰 ' + d.display_name + ' concluída! (' + World.dungeonKills + ' abates)');
+      EXPGUI.toast(tt('web_exp_toast_dungeon_done', [d.display_name, World.dungeonKills]));
       if (got) SFX.levelup();
     } else if (World.dungeonKills > 0) {
-      EXPGUI.toast('Sessão curta demais para contar como run (mín. 8 abates)');
+      EXPGUI.toast(tt('web_exp_toast_run_short'));
     }
     const gate = World.gates.find(g => g.key === World.dungeonKey);
     World.mode = 'overworld'; World.dungeonKey = null;
@@ -954,7 +967,7 @@ const Dungeons = {
     const r = GameData.raidBosses[raidKey];
     if (!r) return;
     if (EXP.combatLevel() < r.combat_level_required - 10) {
-      EXPGUI.toast('Requer nível de combate ~' + r.combat_level_required); SFX.error(); return;
+      EXPGUI.toast(tt('web_exp_toast_need_combat', [r.combat_level_required])); SFX.error(); return;
     }
     EXPGUI.closeJournal();
     const p = World.player;
@@ -966,7 +979,7 @@ const Dungeons = {
       xp_drops: { combat: 0 }, always_drops: [], drop_table: [],
     });
     World.bosses.push(boss);
-    EXPGUI.toast('🐉 ' + r.display_name + ' apareceu!');
+    EXPGUI.toast(tt('web_exp_toast_boss_appeared', [r.display_name]));
     SFX.levelup();
   },
 };

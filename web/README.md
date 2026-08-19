@@ -42,7 +42,10 @@ The web edition now has **two modes sharing one save** (`idle-fantasy-web-save-v
   top-down 2D action RPG, no idling.** Walk an open world with WASD, chop trees,
   mine ore nodes, fish, pickpocket townsfolk, farm real-time patches, and fight
   every one of the 29 dungeons in person — entering their gates scattered across
-  the map. Raid bosses can be challenged from the codex.
+  the map. Unlocked gates (and the walled city) offer **⚡ fast travel** from the
+  world map `[M]`; the Hub's **session queue stays visible** in a HUD chip with a
+  collect/remove panel, and the UI follows the **same i18n locale as the Hub**
+  (PT-BR included). Raid bosses can be challenged from the codex.
 
 Everything is shared between the modes: skills/XP (the app's real `xp_table`),
 inventory, coins, equipment, Slayer tasks, pets, blessings and the 189-quest
@@ -59,6 +62,8 @@ pre-simulated sessions.
 | **Combat** | Melee arc / arrows (best tier first, consumed per shot) / spell projectiles with rune costs and infinite-rune staves; enemy telegraphs; auto-eat at 50 % HP; safe zones can't kill you; death keeps XP and respawns in town. |
 | **Dungeons** | Instanced caves with the real enemy rosters, encounter pacing from `encounter_rate`, rare-drop rolls after a completed run (≥8 kills), style/no-food run tracking for quests. |
 | **Journal [B]** | 16 tabs: skills, equipment, forge, fletching, crafting, cooking (+firemaking), herblore, runecrafting (×2/×3 at 50/75), construction, trade post, prayers (scatter bones/ashes, church blessings), spellbook, farming, Slayer master (+points shop), general store (buy/sell, 2× XP boost) and the codex. |
+| **Fast travel** | The big map `[M]` legend gets a **⚡ Travel** button on every unlocked dungeon gate and on the walled city — you teleport to a safe tile near the destination. Travel is blocked while inside a dungeon or with enemies nearby (no teleporting out of a fight). |
+| **Hub session queue** | The Queue Master queue is visible in Expeditions too: a `📋 Fila` HUD chip opens a panel with the running session (collect it right there when done) and the queued items (removable with ✕). With items queued, finished sessions auto-collect and the next one starts, exactly like in the Hub. |
 
 Controls: **WASD** move · **Space/J/click** attack/gather · **E** interact ·
 **Q** combat style · **P** eat · **B** journal. Touch controls (joystick + buttons)
@@ -97,7 +102,7 @@ appear automatically on mobile.
 | **Seasonal events** | Date-driven events with the full token economy: Bounty Board (one slot per task type, rotation cooldowns, 6am rerolls, turn-in tasks), expedition/boss/minigame token pillars, reward tiers, Night Market with coin-priced offers and cooldown-skip effects, and the whack-a-mole / Simon-says minigame with easy mode. |
 | **Builder's Workshop** | All 9 town buildings × 3 tiers with the app's per-mille builder's discount (0.5%/Construction level): worker XP, guild-quest reduction, longer blessings, extra farm plots, extra carnival games + faster cooldowns + idle tickets, material preservation, and Chronos Spire session speed-up — all wired into their systems. |
 | **XP boost** | The shop's 48h 2× XP boost (2.5M coins) and the seasonal reward-tier boost, applied to every collected session. |
-| **Localization** | 17 languages generated from the app's Weblate translations (`scripts/build_web_locales.py` → `i18n/*.json`), a 🌐 language picker, auto-detection, and localized navigation + the new systems' screens (more strings migrate to the table over time; untranslated keys fall back to English). |
+| **Localization** | 17 languages generated from the app's Weblate translations (`scripts/build_web_locales.py` → `i18n/*.json`), a 🌐 language picker, auto-detection, and localized navigation + the new systems' screens (more strings migrate to the table over time; untranslated keys fall back to English). The **Expeditions mode reads the same locale** from the shared save; its web-only strings live in `i18n/web-keys.json` (English) with per-locale overrides such as `i18n/web-keys.pt-BR.json` (fully translated). |
 
 ### Not in the web edition (yet)
 

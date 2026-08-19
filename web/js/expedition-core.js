@@ -6,6 +6,19 @@
    ===================================================================== */
 'use strict';
 
+// Localized string with fallback (same convention as ui-town.js, plus
+// {1}-style placeholder substitution on the fallback): prefers the Hub's
+// i18n data when loaded, otherwise falls back.
+const tt = (key, args, fb) => {
+  if (typeof I18n !== 'undefined' && I18n.has(key)) return I18n.t(key, args);
+  let s = fb != null ? String(fb) : key;
+  if (args) {
+    if (Array.isArray(args)) args.forEach((v, i) => { s = s.split('{' + (i + 1) + '}').join(String(v)); });
+    else for (const [k, v] of Object.entries(args)) s = s.split('{' + k + '}').join(String(v));
+  }
+  return s;
+};
+
 // ============================================================
 // 0. UTILITÁRIOS E ÁUDIO (do protótipo original)
 // ============================================================
@@ -124,21 +137,89 @@ function makeEnemySprite(name) {
 }
 
 // ============================================================
-// 2. INTEGRAÇÃO — dados reais + textos PT-BR
+// 2. INTEGRAÇÃO — dados reais + textos localizados (i18n do Hub)
 // ============================================================
 const EXP = {
-  /* ---- textos ---- */
-  SKILL_PT: {
-    mining: 'Mineração', woodcutting: 'Corte de Madeira', fishing: 'Pesca', thieving: 'Roubo', agility: 'Agilidade',
-    smithing: 'Metalurgia', cooking: 'Culinária', fletching: 'Arco e Flecha', crafting: 'Artesanato', firemaking: 'Fogueira',
-    runecrafting: 'Criação de Runas', construction: 'Construção', prayer: 'Oração', farming: 'Agricultura',
-    herblore: 'Herbologia', mercantile: 'Mercantil', slayer: 'Slayer', attack: 'Ataque', strength: 'Força',
-    defense: 'Defesa', ranged: 'À Distância', magic: 'Magia', hitpoints: 'Pontos de Vida',
+  /* ---- textos (localizados via i18n; nomes ingleses como fallback) ---- */
+  styleName(s) {
+    switch (s) {
+      case 'attack': return tt('web_exp_style_attack', null, 'Attack');
+      case 'strength': return tt('web_exp_style_strength', null, 'Strength');
+      case 'defense': return tt('web_exp_style_defense', null, 'Defense');
+      case 'ranged': return tt('web_exp_style_ranged', null, 'Ranged');
+      case 'magic': return tt('web_exp_style_magic', null, 'Magic');
+      default: return s;
+    }
   },
-  GROUP_PT: { Gathering: 'Coleta', Production: 'Produção', Combat: 'Combate' },
-  STYLE_PT: { attack: 'Ataque', strength: 'Força', defense: 'Defesa', ranged: 'À Distância', magic: 'Magia' },
-  styleName(s) { return this.STYLE_PT[s] || s; },
-  skillName(key) { return this.SKILL_PT[key] || (GameData.skillDefs.find(d => d.key === key) || { name: key }).name; },
+  skillName(key) {
+    const en = (GameData.skillDefs.find(d => d.key === key) || { name: key }).name;
+    switch (key) {
+      case 'mining': return tt('web_exp_skill_mining', null, en);
+      case 'woodcutting': return tt('web_exp_skill_woodcutting', null, en);
+      case 'fishing': return tt('web_exp_skill_fishing', null, en);
+      case 'thieving': return tt('web_exp_skill_thieving', null, en);
+      case 'agility': return tt('web_exp_skill_agility', null, en);
+      case 'smithing': return tt('web_exp_skill_smithing', null, en);
+      case 'cooking': return tt('web_exp_skill_cooking', null, en);
+      case 'fletching': return tt('web_exp_skill_fletching', null, en);
+      case 'crafting': return tt('web_exp_skill_crafting', null, en);
+      case 'firemaking': return tt('web_exp_skill_firemaking', null, en);
+      case 'runecrafting': return tt('web_exp_skill_runecrafting', null, en);
+      case 'construction': return tt('web_exp_skill_construction', null, en);
+      case 'prayer': return tt('web_exp_skill_prayer', null, en);
+      case 'farming': return tt('web_exp_skill_farming', null, en);
+      case 'herblore': return tt('web_exp_skill_herblore', null, en);
+      case 'mercantile': return tt('web_exp_skill_mercantile', null, en);
+      case 'slayer': return tt('web_exp_skill_slayer', null, en);
+      case 'attack': return tt('web_exp_skill_attack', null, en);
+      case 'strength': return tt('web_exp_skill_strength', null, en);
+      case 'defense': return tt('web_exp_skill_defense', null, en);
+      case 'ranged': return tt('web_exp_skill_ranged', null, en);
+      case 'magic': return tt('web_exp_skill_magic', null, en);
+      case 'hitpoints': return tt('web_exp_skill_hitpoints', null, en);
+      default: return en;
+    }
+  },
+  groupName(g) {
+    switch (g) {
+      case 'Gathering': return tt('web_exp_group_gathering', null, 'Gathering');
+      case 'Production': return tt('web_exp_group_production', null, 'Production');
+      case 'Combat': return tt('web_exp_group_combat', null, 'Combat');
+      default: return g;
+    }
+  },
+  buildingName(b) {
+    switch (b.key) {
+      case 'shop': return tt('web_exp_building_shop', null, b.nameEn || 'General Store');
+      case 'church': return tt('web_exp_building_church', null, b.nameEn || 'Church');
+      case 'workshop': return tt('web_exp_building_workshop', null, b.nameEn || 'Workshop (Hub)');
+      case 'trade': return tt('web_exp_building_trade', null, b.nameEn || 'Trade Post');
+      default: return b.nameEn || b.name || b.key;
+    }
+  },
+  slotName(slot) {
+    switch (slot) {
+      case 'weapon': return tt('web_exp_slot_weapon', null, 'Weapon');
+      case 'shield': return tt('web_exp_slot_shield', null, 'Shield');
+      case 'head': return tt('web_exp_slot_head', null, 'Helm');
+      case 'body': return tt('web_exp_slot_body', null, 'Platebody');
+      case 'legs': return tt('web_exp_slot_legs', null, 'Legs');
+      case 'boots': return tt('web_exp_slot_boots', null, 'Boots');
+      case 'cape': return tt('web_exp_slot_cape', null, 'Cape');
+      case 'ring': return tt('web_exp_slot_ring', null, 'Ring');
+      case 'necklace': return tt('web_exp_slot_necklace', null, 'Necklace');
+      case 'pickaxe': return tt('web_exp_slot_pickaxe', null, 'Pickaxe');
+      case 'axe': return tt('web_exp_slot_axe', null, 'Axe');
+      case 'fishing_rod': return tt('web_exp_slot_fishing_rod', null, 'Fishing rod');
+      case 'hammer': return tt('web_exp_slot_hammer', null, 'Hammer');
+      case 'tinderbox': return tt('web_exp_slot_tinderbox', null, 'Tinderbox');
+      case 'grappling_hook': return tt('web_exp_slot_grappling_hook', null, 'Grappling hook');
+      case 'frying_pan': return tt('web_exp_slot_frying_pan', null, 'Frying pan');
+      case 'lockpick': return tt('web_exp_slot_lockpick', null, 'Lockpick');
+      case 'hoe': return tt('web_exp_slot_hoe', null, 'Hoe');
+      default: return slot;
+    }
+  },
 
   /* ---- listas derivadas dos dados reais ---- */
   ORES: [], TREES: [], FISH: [], BONES: [], SPELLS: [], RAIDS: [],

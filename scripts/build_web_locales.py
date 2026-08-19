@@ -39,6 +39,7 @@ TRIGGERS = [
     "tt('", 'tt("', "TT('", 'TT("', "thas('", 'thas("',
     "I18n.t('", 'I18n.t("', "I18n.tf('", 'I18n.tf("',
     "t('", 't("', 'data-i18n="', "data-i18n='",
+    'data-i18n-title="', "data-i18n-title='",
 ]
 
 
@@ -77,10 +78,10 @@ DYNAMIC_KEY_RES = [
 
 def used_keys():
     keys = set()
-    for js in glob.glob("web/js/*.js") + ["web/index.html"]:
-        if js.endswith("i18n.js"):
+    for src in glob.glob("web/js/*.js") + ["web/index.html", "web/expedition.html"]:
+        if src.endswith("i18n.js"):
             continue
-        with open(js, encoding="utf-8") as f:
+        with open(src, encoding="utf-8") as f:
             keys |= extract_keys(f.read())
     keys |= {k for k in ALL_BASE_KEYS if any(p.match(k) for p in DYNAMIC_KEY_RES)}
     return keys
@@ -135,7 +136,9 @@ def main():
     keys = used_keys()
 
     # Web-only keys (no Android counterpart) live in web/i18n/web-keys.json;
-    # they ship as English in every locale until translated by hand.
+    # they ship as English in every locale until translated by hand. A
+    # per-locale override file (e.g. web-keys.pt-BR.json) provides real
+    # translations for those web-only strings.
     web_keys_path = os.path.join(OUT_DIR, "web-keys.json")
     web_keys = {}
     if os.path.exists(web_keys_path):
@@ -160,6 +163,14 @@ def main():
         for k, v in web_keys.items():
             if k in keys or k in payload:
                 payload.setdefault(k, v)
+        # apply per-locale web-only translations (web-keys.<locale>.json)
+        locale_web_path = os.path.join(OUT_DIR, f"web-keys.{locale}.json")
+        if locale != "en" and os.path.exists(locale_web_path):
+            with open(locale_web_path, encoding="utf-8") as f:
+                locale_web = json.load(f)
+            for k, v in locale_web.items():
+                if k in payload:
+                    payload[k] = v
         for name in ARRAYS:
             if name in base_arrays:
                 payload["__array_" + name] = arrays.get(name, base_arrays[name])

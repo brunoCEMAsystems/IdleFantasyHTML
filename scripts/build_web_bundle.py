@@ -28,8 +28,8 @@ def main():
         + glob.glob(os.path.join(WEB, "i18n", "*.json"))
     )
     for path in files:
-        if os.path.basename(path) == "web-keys.json":
-            continue  # source file for locale generation, not loaded by the game
+        if os.path.basename(path).startswith("web-keys."):
+            continue  # source files for locale generation, not loaded by the game
         # Keys mirror what the loaders fetch: paths relative to web/data/
         # ('xp_table.json', 'dungeons/farm.json') and 'i18n/<locale>.json'.
         if path.startswith(os.path.join(WEB, "data") + os.sep):

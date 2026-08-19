@@ -38,6 +38,7 @@
   #stylechip{position:absolute;left:14px;bottom:14px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;letter-spacing:1px;color:var(--gold2)}
   #taskchip{position:absolute;left:14px;bottom:46px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;color:var(--muted);max-width:300px}
   #sesschip{position:absolute;left:14px;bottom:78px;background:var(--panel);border:1px solid rgba(95,169,255,.45);border-radius:6px;padding:6px 12px;font-size:11px;color:#8fd8ff;max-width:300px;display:none}
+  #queuechip{position:absolute;left:14px;bottom:110px;background:var(--panel);border:1px solid rgba(246,196,83,.5);border-radius:6px;padding:6px 12px;font-size:11px;color:var(--gold2);max-width:300px;display:none;pointer-events:auto;cursor:pointer}
   #dungbanner{position:absolute;top:14px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:6px 18px;font-size:13px;letter-spacing:2px;color:var(--gold2);text-transform:uppercase;display:none;white-space:nowrap}
   #prompt{position:absolute;bottom:110px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 18px;font-size:14px;color:var(--gold2);letter-spacing:1px;display:none;text-align:center;max-width:88vw;box-shadow:0 8px 30px rgba(0,0,0,.6)}
   #prompt small{display:block;font-size:10px;color:var(--muted);margin-top:2px;letter-spacing:0}
@@ -105,6 +106,14 @@
   .map-row .side{display:flex;gap:6px;align-items:center;color:var(--muted);white-space:nowrap}
   #mapchip{position:absolute;right:14px;bottom:154px;pointer-events:auto;cursor:pointer;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--gold2);letter-spacing:1px;box-shadow:0 4px 18px rgba(0,0,0,.45)}
 
+  /* mapa grande: botão de viagem rápida + painel da fila */
+  .map-travel{cursor:pointer;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:5px;border:1px solid var(--border);color:#0c0f1a;background:linear-gradient(180deg,var(--gold2),var(--gold));box-shadow:0 2px 0 #7a5516;white-space:nowrap}
+  .map-travel:active{transform:translateY(2px);box-shadow:0 0 0 #7a5516}
+  .map-travel.disabled{filter:grayscale(1) brightness(.55);cursor:not-allowed}
+  #queuepanel .panel{max-width:640px}
+  #queuebody{display:flex;flex-direction:column;gap:7px;max-height:46vh;overflow-y:auto;padding:4px 2px}
+  .qnum{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:rgba(246,196,83,.18);border:1px solid var(--border);font-size:10px;font-weight:700;color:var(--gold2)}
+
   /* touch */
   #touch{position:absolute;inset:0;display:none;pointer-events:none;z-index:20}
   #touch.visible{display:block}
@@ -143,7 +152,7 @@
         <div class="bar-label"><span id="stylename">ATAQUE</span><span id="ammotext"></span></div>
         <div class="bar"><i id="xpfill"></i></div>
       </div>
-      <div class="bars scorechip">🪙 Moedas: <b id="scoretext" style="color:var(--gold2)">0</b></div>
+      <div class="bars scorechip"><span data-i18n="web_exp_hud_coins">🪙 Moedas: </span><b id="scoretext" style="color:var(--gold2)">0</b></div>
     </div>
     <div id="resources">
       <div class="res">🪵 <b id="rlog">0</b></div>
@@ -156,10 +165,11 @@
     <div id="prompt"></div>
     <div id="stylechip">Estilo: Ataque [Q]</div>
     <div id="taskchip"></div>
+    <div id="queuechip" data-i18n-title="web_exp_chip_queue_title">📋 Fila: 0/3</div>
     <div id="sesschip"></div>
-    <div id="eatchip" title="Comer melhor comida [P]">🍖 Comer [P]</div>
-    <div id="hubchip" title="Trocar para o modo idle (mesmo herói)">🏠 Hub Idle</div>
-    <div id="mapchip" title="Mapa do mundo [M]">🗺️ Mapa [M]</div>
+    <div id="eatchip" data-i18n-title="web_exp_chip_eat_title" title="Comer melhor comida [P]"><span data-i18n="web_exp_chip_eat">🍖 Comer [P]</span></div>
+    <div id="hubchip" data-i18n-title="web_exp_chip_hub_title" title="Trocar para o modo idle (mesmo herói)"><span data-i18n="web_exp_chip_hub">🏠 Hub Idle</span></div>
+    <div id="mapchip" data-i18n-title="web_exp_chip_map_title" title="Mapa do mundo [M]"><span data-i18n="web_exp_chip_map">🗺️ Mapa [M]</span></div>
   </div>
 
   <div id="toasts"></div>
@@ -175,10 +185,10 @@
   <!-- MENU -->
   <div class="screen" id="menu">
     <div class="title">EXPEDITIONS</div>
-    <div class="subtitle">RPG de mundo aberto · Idle Fantasy em tempo real</div>
-    <button class="btn" id="playbtn">▶ Jogar</button>
-    <button class="btn ghost" id="hubbtn">🏠 Modo Hub (idle) — mesmo herói</button>
-    <div class="hint">
+    <div class="subtitle" data-i18n="web_exp_menu_subtitle">RPG de mundo aberto · Idle Fantasy em tempo real</div>
+    <button class="btn" id="playbtn" data-i18n="web_exp_menu_play">▶ Jogar</button>
+    <button class="btn ghost" id="hubbtn" data-i18n="web_exp_menu_hub">🏠 Modo Hub (idle) — mesmo herói</button>
+    <div class="hint" id="menuhint">
       <b>Mover:</b> WASD/Setas &nbsp;·&nbsp; <b>Atacar/Coletar:</b> Espaço/J/Clique &nbsp;·&nbsp; <b>Interagir:</b> E &nbsp;·&nbsp; <b>Diário:</b> B/C<br>
       <b>Trocar estilo:</b> Q &nbsp;·&nbsp; <b>Comer:</b> P &nbsp;·&nbsp; Explore a cidade murada, corte árvores, minere, pesque, furte, plante,<br>
       treine Agilidade nos obstáculos da muralha, construa móveis, despache caravanas de comércio
@@ -191,33 +201,43 @@
   <!-- DEATH -->
   <div class="screen hidden" id="death">
     <div class="panel">
-      <h2>☠ Você Caiu em Combate</h2>
+      <h2 data-i18n="web_exp_death_title">☠ Você Caiu em Combate</h2>
       <div class="statline" id="deathinfo">…</div>
-      <div class="statline">O XP conquistado continua seu (como no Idle Fantasy), mas você volta para a cidade.</div>
-      <button class="btn" id="respawnbtn">↻ Renascer na Cidade</button>
+      <div class="statline" id="deathnote" data-i18n="web_exp_death_note">O XP conquistado continua seu (como no Idle Fantasy), mas você volta para a cidade.</div>
+      <button class="btn" id="respawnbtn" data-i18n="web_exp_death_respawn">↻ Renascer na Cidade</button>
     </div>
   </div>
 
   <!-- JOURNAL -->
   <div class="screen hidden" id="journal">
     <div class="panel">
-      <h2>📖 Diário do Aventureiro</h2>
+      <h2 data-i18n="web_exp_journal_title">📖 Diário do Aventureiro</h2>
       <div class="tabs" id="tabs"></div>
       <div id="tabpages"></div>
-      <button class="btn ghost" id="closejournal">Fechar [B]</button>
+      <button class="btn ghost" id="closejournal" data-i18n="web_exp_journal_close">Fechar [B]</button>
     </div>
   </div>
 
   <!-- BIG MAP -->
   <div class="screen hidden" id="bigmap">
     <div class="panel" style="max-width:940px">
-      <h2>🗺️ Mapa do Mundo</h2>
+      <h2 data-i18n="web_exp_map_title">🗺️ Mapa do Mundo</h2>
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;justify-content:center">
         <canvas id="mapcv" width="900" height="900" style="width:min(60vh,680px);height:min(60vh,680px);image-rendering:pixelated;border:2px solid var(--border);border-radius:8px;background:#0c0f1a;flex:none"></canvas>
         <div id="maplegend" style="flex:1;min-width:250px;max-height:56vh;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
       </div>
-      <div id="maphint" class="statline" style="text-align:left;min-height:2.4em">⚪ você · 🟡 portal liberado · 🔴 selado · azul = ar de agilidade — clique num local para detalhes</div>
-      <button class="btn ghost" id="closebigmap">Fechar [M]</button>
+      <div id="maphint" class="statline" style="text-align:left;min-height:2.4em" data-i18n="web_exp_map_hint">⚪ você · 🟡 portal liberado · 🔴 selado · azul = anel de agilidade — clique num local para detalhes</div>
+      <button class="btn ghost" id="closebigmap" data-i18n="web_exp_map_close">Fechar [M]</button>
+    </div>
+  </div>
+
+  <!-- SESSION QUEUE (fila do Queue Master do Hub) -->
+  <div class="screen hidden" id="queuepanel">
+    <div class="panel">
+      <h2 data-i18n="web_exp_queue_title">📋 Fila de Sessões (Queue Master)</h2>
+      <div id="queuebody"></div>
+      <div id="queuehint" class="statline" data-i18n="web_exp_queue_hint">Sessões iniciadas no modo Hub continuam rodando enquanto você explora — colete-as aqui mesmo, ou enfileire as próximas no Hub.</div>
+      <button class="btn ghost" id="closequeue" data-i18n="web_exp_btn_close">Fechar</button>
     </div>
   </div>
 </div>
@@ -234,6 +254,7 @@
   <script src="js/state.js"></script>
   <script src="js/systems.js"></script>
   <script src="js/engine.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/expedition-core.js"></script>
   <script src="js/expedition-world.js"></script>
   <script src="js/expedition-ui.js"></script>
