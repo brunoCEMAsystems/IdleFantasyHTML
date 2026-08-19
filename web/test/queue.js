@@ -102,6 +102,22 @@ function check(name, cond) {
   const advanced = Engine.startNextQueued();
   check('unstartable item dropped', advanced === false && State.state.sessionQueue.length === 0);
 
+  console.log('— legacy save (pre-queue) must not break home —');
+  // regressão: save criado antes do Queue Master não tem sessionQueue;
+  // sem o merge, _queueCard explodia e a home ficava em branco
+  const legacy = JSON.parse(JSON.stringify({
+    version: 1, createdAt: Date.now(), coins: 100,
+    skills: State.state.skills, inventory: {}, equipped: {}, combatStyle: 'attack',
+    session: null, log: [], stats: State.state.stats,
+  }));
+  delete legacy.sessionQueue;
+  localStorage.setItem(State.SAVE_KEY, JSON.stringify(legacy));
+  const loaded = State.load();
+  check('legacy save loads', loaded === true);
+  check('sessionQueue defaults to []', Array.isArray(State.state.sessionQueue) && State.state.sessionQueue.length === 0);
+  check('maxQueueSize on legacy save', State.maxQueueSize() === 3);
+  check('enqueue on legacy save works', Engine.enqueueAction({ kind: null, skill: 'mining', activityKey: 'copper_ore', qty: 0 }).ok);
+
   console.log(failures === 0 ? '\nALL QUEUE CHECKS PASSED' : '\n' + failures + ' FAILURES');
   process.exit(failures === 0 ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(1); });

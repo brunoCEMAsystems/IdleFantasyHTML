@@ -67,6 +67,9 @@ const UI = {
   /** Cheap per-tick refresh of live elements (no full re-render). */
   updateLive() {
     this.renderTopbar();
+    // Re-render once when the busy state flips so Start ↔ ➕ buttons stay honest
+    const busy = !!Engine.session();
+    if (this._renderedBusy !== busy) { this._renderedBusy = busy; this.render(); return; }
     if (this.updateTownLive) this.updateTownLive();
     const bar = document.getElementById('session-progress-fill');
     const label = document.getElementById('session-progress-label');
@@ -266,7 +269,7 @@ const UI = {
 
   _queueCard() {
     const card = Util.el('div', 'card');
-    const q = State.state.sessionQueue;
+    const q = Array.isArray(State.state.sessionQueue) ? State.state.sessionQueue : [];
     const max = State.maxQueueSize();
     card.appendChild(Util.el('h2', null, `📋 Session Queue (${q.length}/${max})`));
     if (q.length === 0) {
@@ -280,7 +283,7 @@ const UI = {
         const row = Util.el('div', 'row');
         row.innerHTML = `
           <div class="row-icon">${i + 1}</div>
-          <div class="row-main"><div class="row-name">${Util.esc(item.label)}</div>
+          <div class="row-main"><div class="row-name">${Util.esc(item.label || item.activityKey || 'session')}</div>
           <div class="row-sub">${i === 0 && !Engine.hasSession() ? 'starting…' : 'starts after the previous session is collected'}</div></div>`;
         const actions = Util.el('div', 'row-actions');
         const rm = Util.el('button', 'btn small', '✕');
@@ -497,8 +500,10 @@ const UI = {
     const row = Util.el('div', 'row' + (locked ? ' locked' : ''));
     const actions = Util.el('div', 'row-actions');
     if (extra) actions.appendChild(extra);
-    const btn = Util.el('button', 'btn small', locked ? '🔒' : 'Start');
-    btn.disabled = locked || Engine.hasSession();
+    const busy = Engine.hasSession();
+    const btn = Util.el('button', 'btn small', locked ? '🔒' : busy ? '➕' : 'Start');
+    if (!locked && busy) btn.title = 'A session is running — add this to the Queue Master queue';
+    btn.disabled = locked;
     if (!locked) btn.onclick = onStart;
     actions.appendChild(btn);
     row.innerHTML = `
@@ -912,7 +917,7 @@ const UI = {
         sub: `${Util.esc(boss.description || '')}<br>${boss.hp} HP · ${boss.duration_minutes} min · loot ${Util.fmt(boss.common_loot.coins_min)}–${Util.fmt(boss.common_loot.coins_max)} 🪙${rares ? ' · rares: ' + rares : ''}${pet}`,
         locked: !lvlOk,
         lockedReason: `Requires combat level ${boss.combat_level_required}`,
-        onStart: () => this._tryStart(() => Systems.Bosses.start(key)),
+        onStart: () => this._tryStart(() => Systems.Bosses.start(key), { kind: 'boss', activityKey: key }),
       }));
     }
     card.appendChild(list);

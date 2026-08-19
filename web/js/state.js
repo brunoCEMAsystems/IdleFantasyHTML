@@ -114,6 +114,7 @@ const State = {
       data.expeditions = { ...def.expeditions, ...data.expeditions };
       data.seasonal = { ...def.seasonal, ...data.seasonal };
       if (data.xpBoostUntil == null) data.xpBoostUntil = 0;
+      if (!Array.isArray(data.sessionQueue)) data.sessionQueue = [];
       if (!Array.isArray(data.farmingPatches)) data.farmingPatches = def.farmingPatches;
       while (data.farmingPatches.length < 5) data.farmingPatches.push(null);
       if (!Array.isArray(data.petsOwned)) data.petsOwned = [];
