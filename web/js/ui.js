@@ -1167,7 +1167,16 @@ const UI = {
   bindTabs() {
     document.querySelectorAll('.tab').forEach(t => {
       this._applyTabLabel(t);
-      t.onclick = () => { this.tab = t.dataset.tab; this._setTab(); };
+      t.onclick = () => {
+        this.tab = t.dataset.tab;
+        this._setTab();
+        // On narrow screens the tab bar scrolls horizontally — keep the
+        // active tab in view without moving the page.
+        const nav = document.getElementById('tabs');
+        if (nav && nav.scrollWidth > nav.clientWidth && t.scrollIntoView) {
+          t.scrollIntoView({ block: 'nearest', inline: 'center' });
+        }
+      };
     });
   },
 
