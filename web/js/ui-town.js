@@ -25,7 +25,7 @@
     Systems.ensureDailies();
     const wrap = Util.el('div');
 
-    const nav = Util.el('div', 'style-row');
+    const nav = Util.el('div', 'style-row town-nav');
     nav.style.marginBottom = '12px';
     const tabs = [
       { key: 'slayer', label: '🗡️ ' + tt('slayer_title', null, 'Slayer Master') },
